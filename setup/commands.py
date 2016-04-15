@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement
 
@@ -8,12 +8,12 @@ __docformat__ = 'restructuredtext en'
 
 __all__ = [
         'pot', 'translations', 'get_translations', 'iso639', 'iso3166',
-        'build', 'server', 'mathjax',
+        'build', 'mathjax',
         'gui',
         'develop', 'install',
-        'kakasi', 'coffee', 'resources',
+        'kakasi', 'coffee', 'cacerts', 'resources',
         'check',
-        'sdist',
+        'sdist', 'bootstrap',
         'manual', 'tag_release',
         'pypi_register', 'pypi_upload', 'upload_to_server',
         'upload_installers',
@@ -35,16 +35,14 @@ iso3166 = ISO3166()
 from setup.extensions import Build
 build = Build()
 
-from setup.server import Server
-server = Server()
-
 from setup.mathjax import MathJax
 mathjax = MathJax()
 
-from setup.install import Develop, Install, Sdist
+from setup.install import Develop, Install, Sdist, Bootstrap
 develop = Develop()
 install = Install()
 sdist = Sdist()
+bootstrap = Bootstrap()
 
 from setup.gui import GUI
 gui = GUI()
@@ -52,10 +50,11 @@ gui = GUI()
 from setup.check import Check
 check = Check()
 
-from setup.resources import Resources, Kakasi, Coffee
+from setup.resources import Resources, Kakasi, Coffee, CACerts
 resources = Resources()
 kakasi = Kakasi()
 coffee = Coffee()
+cacerts = CACerts()
 
 from setup.publish import Manual, TagRelease, Stage1, Stage2, \
         Stage3, Stage4, Stage5, Publish, PublishBetas

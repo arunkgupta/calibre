@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -8,7 +8,6 @@ __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import os
 
-from calibre.ebooks.docx.names import XPath
 NBSP = '\xa0'
 
 def mergeable(previous, current):
@@ -99,7 +98,7 @@ def before_count(root, tag, limit=10):
         if ans > limit:
             return limit
 
-def cleanup_markup(log, root, styles, dest_dir, detect_cover):
+def cleanup_markup(log, root, styles, dest_dir, detect_cover, XPath):
     # Move <hr>s outside paragraphs, if possible.
     pancestor = XPath('|'.join('ancestor::%s[1]' % x for x in ('p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6')))
     for hr in root.xpath('//span/hr'):
@@ -186,7 +185,7 @@ def cleanup_markup(log, root, styles, dest_dir, detect_cover):
                 try:
                     width, height, fmt = identify(path)
                 except:
-                    width, height, fmt = 0, 0, None
+                    width, height, fmt = 0, 0, None  # noqa
                 del fmt
                 try:
                     is_cover = 0.8 <= height/width <= 1.8 and height*width >= 160000

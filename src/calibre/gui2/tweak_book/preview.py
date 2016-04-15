@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -48,12 +48,17 @@ def parse_html(raw):
 
 class ParseItem(object):
 
-    __slots__ = ('name', 'length', 'fingerprint', 'parsed_data')
+    __slots__ = ('name', 'length', 'fingerprint', 'parsing_done', 'parsed_data')
 
     def __init__(self, name):
         self.name = name
         self.length, self.fingerprint = 0, None
         self.parsed_data = None
+        self.parsing_done = False
+
+    def __repr__(self):
+        return 'ParsedItem(name=%r, length=%r, fingerprint=%r, parsing_done=%r, parsed_data_is_None=%r)' % (
+            self.name, self.length, self.fingerprint, self.parsing_done, self.parsed_data is None)
 
 class ParseWorker(Thread):
 
@@ -100,6 +105,7 @@ class ParseWorker(Thread):
                 import traceback
                 traceback.print_exc()
             else:
+                pi.parsing_done = True
                 parsed_data = res['result']
                 if res['tb']:
                     prints("Parser error:")
@@ -114,9 +120,10 @@ class ParseWorker(Thread):
         if pi is None:
             self.parse_items[name] = pi = ParseItem(name)
         else:
-            if pi.length == ldata and pi.fingerprint == hdata:
+            if pi.parsing_done and pi.length == ldata and pi.fingerprint == hdata:
                 return
             pi.parsed_data = None
+            pi.parsing_done = False
         pi.length, pi.fingerprint = ldata, hdata
         self.requests.put((self.request_count, pi, data))
         self.request_count += 1
@@ -165,7 +172,7 @@ class NetworkReply(QNetworkReply):
         if data is None:
             return QTimer.singleShot(10, self.check_for_parse)
         self.__data = data
-        self.setHeader(QNetworkRequest.ContentTypeHeader, 'text/html; charset=utf-8')
+        self.setHeader(QNetworkRequest.ContentTypeHeader, 'application/xhtml+xml; charset=utf-8')
         self.setHeader(QNetworkRequest.ContentLengthHeader, len(self.__data))
         self.finalize_reply()
 
@@ -364,6 +371,7 @@ class WebView(QWebView):
         self.setPage(self._page)
         self.inspector.setPage(self._page)
         self.clear()
+        self.setAcceptDrops(False)
 
     def sizeHint(self):
         return self._size_hint
@@ -392,9 +400,7 @@ class WebView(QWebView):
 
             <p style="font-size:x-small; color: gray">Note that this is a quick preview
             only, it is not intended to simulate an actual ebook reader. Some
-            aspects of your ebook will not work, such as, page breaks and
-            page margins.
-
+            aspects of your ebook will not work, such as page breaks and page margins.
             '''))
         self.page().current_root = None
 

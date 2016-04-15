@@ -94,10 +94,12 @@ def extract_calibre_cover(raw, base, log):
         'font', 'br'])
     images = soup.findAll('img')
     if matches is None and len(images) == 1 and \
-            images[0].get('alt', '')=='cover':
+            images[0].get('alt', '').lower()=='cover':
         img = images[0]
         img = os.path.join(base, *img['src'].split('/'))
-        return_raster_image(img)
+        q = return_raster_image(img)
+        if q is not None:
+            return q
 
     # Look for a simple cover, i.e. a body with no text and only one <img> tag
     if matches is None:
@@ -110,7 +112,7 @@ def extract_calibre_cover(raw, base, log):
             images = body.findAll('img', src=True)
             if 0 < len(images) < 2:
                 img = os.path.join(base, *images[0]['src'].split('/'))
-                return_raster_image(img)
+                return return_raster_image(img)
 
 def render_html_svg_workaround(path_to_html, log, width=590, height=750):
     from calibre.ebooks.oeb.base import SVG_NS
@@ -237,7 +239,7 @@ def calibre_cover(title, author_string, series_string=None,
         if cleanup:
             os.remove(font_path)
 
-UNIT_RE = re.compile(r'^(-*[0-9]*[.]?[0-9]*)\s*(%|em|ex|en|px|mm|cm|in|pt|pc|rem)$')
+UNIT_RE = re.compile(r'^(-*[0-9]*[.]?[0-9]*)\s*(%|em|ex|en|px|mm|cm|in|pt|pc|rem|q)$')
 
 def unit_convert(value, base, font, dpi, body_font_size=12):
     ' Return value in pts'
@@ -275,7 +277,20 @@ def unit_convert(value, base, font, dpi, body_font_size=12):
             result = value * 28.346456693
         elif unit == 'rem':
             result = value * body_font_size
+        elif unit == 'q':
+            result = value * 0.708661417325
     return result
+
+def parse_css_length(value):
+    try:
+        m = UNIT_RE.match(value)
+    except TypeError:
+        return None, None
+    if m is not None and m.group(1):
+        value = float(m.group(1))
+        unit = m.group(2)
+        return value, unit.lower()
+    return None, None
 
 def generate_masthead(title, output_path=None, width=600, height=60):
     from calibre.ebooks.conversion.config import load_defaults
@@ -284,3 +299,16 @@ def generate_masthead(title, output_path=None, width=600, height=60):
     from calibre.ebooks.covers import generate_masthead
     return generate_masthead(title, output_path=output_path, width=width, height=height, font_family=masthead_font_family)
 
+def escape_xpath_attr(value):
+    if '"' in value:
+        if "'" in value:
+            parts = re.split('("+)', value)
+            ans = []
+            for x in parts:
+                if x:
+                    q = "'" if '"' in x else '"'
+                    ans.append(q + x + q)
+            return 'concat(%s)' % ', '.join(ans)
+        else:
+            return "'%s'" % value
+    return '"%s"' % value

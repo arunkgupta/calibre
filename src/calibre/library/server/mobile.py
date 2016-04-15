@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -7,18 +7,19 @@ __docformat__ = 'restructuredtext en'
 
 import re, os
 import __builtin__
-from urllib import quote
+from urllib import quote, urlencode
 
 import cherrypy
 from lxml import html
 from lxml.html.builder import HTML, HEAD, TITLE, LINK, DIV, IMG, BODY, \
-        OPTION, SELECT, INPUT, FORM, SPAN, TABLE, TR, TD, A, HR
+        OPTION, SELECT, INPUT, FORM, SPAN, TABLE, TR, TD, A, HR, META
 
 from calibre.library.server import custom_fields_to_display
 from calibre.library.server.utils import strftime, format_tag_string
 from calibre.ebooks.metadata import fmt_sidx
 from calibre.constants import __appname__
 from calibre import human_readable, isbytestring
+from calibre.utils.cleantext import clean_xml_chars
 from calibre.utils.date import utcfromtimestamp, as_local_time
 from calibre.utils.filenames import ascii_filename
 from calibre.utils.icu import sort_key
@@ -78,11 +79,11 @@ def build_navigation(start, num, total, url_base):  # {{{
 
     if start > 1:
         for t,s in [('First', 1), ('Previous', max(start-num,1))]:
-            left_buttons.append(A(t, href='%s;start=%d'%(url_base, s)))
+            left_buttons.append(A(t, href='%s&start=%d'%(url_base, s)))
 
     if total > start + num:
         for t,s in [('Next', start+num), ('Last', total-num+1)]:
-            right_buttons.append(A(t, href='%s;start=%d'%(url_base, s)))
+            right_buttons.append(A(t, href='%s&start=%d'%(url_base, s)))
 
     buttons = TABLE(
             TR(left_buttons, right_buttons),
@@ -148,8 +149,8 @@ def build_index(books, num, search, sort, order, start, total, url_base, CKEYS,
             if val:
                 ctext += '%s=[%s] '%tuple(val.split(':#:'))
 
-        first = SPAN(u'\u202f%s %s by %s' % (book['title'], series,
-            book['authors']), CLASS('first-line'))
+        first = SPAN(u'\u202f%s %s by %s' % (clean_xml_chars(book['title']), clean_xml_chars(series),
+            clean_xml_chars(book['authors'])), CLASS('first-line'))
         div.append(first)
         second = SPAN(u'%s - %s %s %s' % (book['size'],
             book['timestamp'],
@@ -169,11 +170,12 @@ def build_index(books, num, search, sort, order, start, total, url_base, CKEYS,
     return HTML(
         HEAD(
             TITLE(__appname__ + ' Library'),
-            LINK(rel='icon', href='http://calibre-ebook.com/favicon.ico',
+            LINK(rel='icon', href='//calibre-ebook.com/favicon.ico',
                 type='image/x-icon'),
             LINK(rel='stylesheet', type='text/css',
                 href=prefix+'/mobile/style.css'),
-            LINK(rel='apple-touch-icon', href="/static/calibre.png")
+            LINK(rel='apple-touch-icon', href="/static/calibre.png"),
+            META(name="robots", content="noindex")
         ),  # End head
         body
     )  # End html
@@ -285,7 +287,8 @@ class MobileServer(object):
         cherrypy.response.headers['Content-Type'] = 'text/html; charset=utf-8'
         cherrypy.response.headers['Last-Modified'] = self.last_modified(updated)
 
-        url_base = "/mobile?search=" + search+";order="+order+";sort="+sort+";num="+str(num)
+        q = {b'search':search.encode('utf-8'), b'order':order.encode('utf-8'), b'sort':sort.encode('utf-8'), b'num':str(num).encode('utf-8')}
+        url_base = "/mobile?" + urlencode(q)
         ua = cherrypy.request.headers.get('User-Agent', '').strip()
         have_kobo_browser = self.is_kobo_browser(ua)
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -7,9 +7,10 @@ __docformat__ = 'restructuredtext en'
 
 import functools, re, os, traceback, errno, time
 from collections import defaultdict, namedtuple
+from itertools import groupby
 
 from PyQt5.Qt import (QAbstractTableModel, Qt, pyqtSignal, QIcon, QImage,
-        QModelIndex, QDateTime, QColor, QPixmap, QPainter)
+        QModelIndex, QDateTime, QColor, QPixmap, QPainter, QApplication)
 
 from calibre.gui2 import error_dialog
 from calibre.utils.search_query_parser import ParseException
@@ -47,6 +48,14 @@ def default_image():
     if _default_image is None:
         _default_image = QImage(I('default_cover.png'))
     return _default_image
+
+def group_numbers(numbers):
+    for k, g in groupby(enumerate(sorted(numbers)), lambda (i, x):i - x):
+        first = None
+        for last in g:
+            if first is None:
+                first = last[1]
+        yield first, last[1]
 
 class ColumnColor(object):  # {{{
 
@@ -194,10 +203,15 @@ class BooksModel(QAbstractTableModel):  # {{{
         self.alignment_map = {}
         self.buffer_size = buffer
         self.metadata_backup = None
-        self.bool_yes_icon = QIcon(I('ok.png'))
-        self.bool_no_icon = QIcon(I('list_remove.png'))
-        self.bool_blank_icon = QIcon(I('blank.png'))
+        icon_height = (parent.fontMetrics() if hasattr(parent, 'fontMetrics') else QApplication.instance().fontMetrics()).lineSpacing()
+        self.bool_yes_icon = QPixmap(I('ok.png')).scaledToHeight(icon_height, Qt.SmoothTransformation)
+        self.bool_no_icon = QPixmap(I('list_remove.png')).scaledToHeight(icon_height, Qt.SmoothTransformation)
+        self.bool_blank_icon = QPixmap(I('blank.png')).scaledToHeight(icon_height, Qt.SmoothTransformation)
+        # Qt auto-scales marked icon correctly, so we dont need to do it (and
+        # remember that the cover grid view needs a larger version of the icon,
+        # anyway)
         self.marked_icon = QIcon(I('marked.png'))
+        self.bool_blank_icon_as_icon = QIcon(self.bool_blank_icon)
         self.row_decoration = None
         self.device_connected = False
         self.ids_to_highlight = []
@@ -222,7 +236,7 @@ class BooksModel(QAbstractTableModel):  # {{{
         self.row_height = height
 
     def set_row_decoration(self, current_marked):
-        self.row_decoration = self.bool_blank_icon if current_marked else None
+        self.row_decoration = self.bool_blank_icon_as_icon if current_marked else None
 
     def change_alignment(self, colname, alignment):
         if colname in self.column_map and alignment in ('left', 'right', 'center'):
@@ -238,7 +252,10 @@ class BooksModel(QAbstractTableModel):  # {{{
                     col))
 
     def is_custom_column(self, cc_label):
-        return cc_label in self.custom_columns
+        try:
+            return cc_label in self.custom_columns
+        except AttributeError:
+            return False
 
     def read_config(self):
         pass
@@ -256,6 +273,7 @@ class BooksModel(QAbstractTableModel):  # {{{
 
     def set_database(self, db):
         self.ids_to_highlight = []
+        self.alignment_map = {}
         self.ids_to_highlight_set = set()
         self.current_highlighted_idx = None
         self.db = db
@@ -301,12 +319,11 @@ class BooksModel(QAbstractTableModel):  # {{{
 
     def refresh_rows(self, rows, current_row=-1):
         self._clear_caches()
-        for row in rows:
-            if row == current_row:
-                self.new_bookdisplay_data.emit(
-                          self.get_book_display_info(row))
-            self.dataChanged.emit(self.index(row, 0), self.index(row,
-                self.columnCount(QModelIndex())-1))
+        cc = self.columnCount(QModelIndex()) - 1
+        for first_row, last_row in group_numbers(rows):
+            self.dataChanged.emit(self.index(first_row, 0), self.index(last_row, cc))
+            if current_row >= 0 and first_row <= current_row <= last_row:
+                self.new_bookdisplay_data.emit(self.get_book_display_info(current_row))
 
     def close(self):
         self.db.close()
@@ -926,13 +943,19 @@ class BooksModel(QAbstractTableModel):  # {{{
                 return None
             if role == Qt.ToolTipRole:
                 ht = self.column_map[section]
+                fm = self.db.field_metadata[self.column_map[section]]
                 if ht == 'timestamp':  # change help text because users know this field as 'date'
                     ht = 'date'
-                if self.db.field_metadata[self.column_map[section]]['is_category']:
-                    is_cat = '.\n\n' + _('Click in this column and press Q to Quickview books with the same %s') % ht
+                if fm['is_category']:
+                    is_cat = '\n\n' + _('Click in this column and press Q to Quickview books with the same %s') % ht
                 else:
                     is_cat = ''
-                return (_('The lookup/search name is "{0}"{1}').format(ht, is_cat))
+                cust_desc = ''
+                if fm['is_custom']:
+                    cust_desc = fm['display'].get('description', '')
+                    if cust_desc:
+                        cust_desc = '\n' + _('Description:') + ' ' + cust_desc
+                return (_('The lookup/search name is "{0}"{1}{2}').format(ht, cust_desc, is_cat))
             if role == Qt.DisplayRole:
                 return (self.headers[self.column_map[section]])
             return None

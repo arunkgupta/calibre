@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement, print_function
 
@@ -28,8 +28,8 @@ machine = 'X64' if is64bit else 'X86'
 
 DESCRIPTIONS = {
         'calibre' : 'The main calibre program',
-        'ebook-viewer' : 'Viewer for all e-book formats',
-        'ebook-edit' : 'Edit e-books',
+        'ebook-viewer' : 'The calibre e-book viewer',
+        'ebook-edit'   : 'The calibre e-book editor',
         'lrfviewer'    : 'Viewer for LRF files',
         'ebook-convert': 'Command line interface to the conversion/news download system',
         'ebook-meta'   : 'Command line interface for manipulating e-book metadata',
@@ -315,8 +315,14 @@ class Win32Freeze(Command, WixMixIn):
 
         self.info('\tAdding misc binary deps')
         bindir = os.path.join(SW, 'bin')
-        for x in ('pdftohtml', 'pdfinfo', 'pdftoppm'):
+        for x in ('pdftohtml', 'pdfinfo', 'pdftoppm', 'jpegtran-calibre', 'cjpeg-calibre'):
             shutil.copy2(os.path.join(bindir, x+'.exe'), self.base)
+        for x in ('', '.manifest'):
+            fname = 'optipng.exe' + x
+            src = os.path.join(bindir, fname)
+            shutil.copy2(src, self.base)
+            src = os.path.join(self.base, fname)
+            os.rename(src, src.replace('.exe', '-calibre.exe'))
         for pat in ('*.dll',):
             for f in glob.glob(os.path.join(bindir, pat)):
                 ok = True
@@ -549,16 +555,21 @@ class Win32Freeze(Command, WixMixIn):
                                                                       '*.exe'))
         if not files:
             raise ValueError('No installers found')
-        args = ['signtool.exe', 'sign', '/a', '/d',
+        args = ['signtool.exe', 'sign', '/a', '/fd', 'sha256', '/td', 'sha256', '/d',
             'calibre - E-book management', '/du',
-            'http://calibre-ebook.com', '/t',
-            'http://timestamp.verisign.com/scripts/timstamp.dll']
-        try:
-            subprocess.check_call(args + files)
-        except subprocess.CalledProcessError:
-            print ('Signing failed, retrying with different timestamp server')
-            args[-1] = 'http://timestamp.comodoca.com/authenticode'
-            subprocess.check_call(args + files)
+            'http://calibre-ebook.com', '/tr']
+
+        def runcmd(cmd):
+            for timeserver in ('http://timestamp.geotrust.com/tsa', 'http://timestamp.comodoca.com/rfc3161',):
+                try:
+                    subprocess.check_call(cmd + [timeserver] + files)
+                    break
+                except subprocess.CalledProcessError:
+                    print ('Signing failed, retrying with different timestamp server')
+            else:
+                raise SystemExit('Signing failed')
+
+        runcmd(args)
 
     def add_dir_to_zip(self, zf, path, prefix=''):
         '''
@@ -678,6 +689,8 @@ class Win32Freeze(Command, WixMixIn):
                         # on some systems magick.pyd fails to load from memory
                         # on 64 bit
                         'magick.pyd',
+                        # dupypy crashes when loaded from the zip file
+                        'dukpy.pyd',
                         }:
                         self.add_to_zipfile(zf, pyd, x)
                         os.remove(self.j(x, pyd))
@@ -715,8 +728,6 @@ class Win32Freeze(Command, WixMixIn):
                 if hname in handled:
                     continue
                 handled.add(hname)
-                if os.path.basename(d).startswith('six-'):
-                    continue  # We prefer the version bundled with calibre
                 for x in os.listdir(d):
                     if x in {'EGG-INFO', 'site.py', 'site.pyc', 'site.pyo'}:
                         continue

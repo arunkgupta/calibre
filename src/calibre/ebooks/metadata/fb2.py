@@ -1,18 +1,19 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 __license__   = 'GPL v3'
 __copyright__ = '2011, Roman Mukhin <ramses_ru at hotmail.com>, '\
                 '2008, Anatoly Shipitsin <norguhtar at gmail.com>'
 '''Read meta information from fb2 files'''
 
-import os, random, datetime
+import os, random
 from functools import partial
 from string import ascii_letters, digits
 from base64 import b64encode
 
 from lxml import etree
 
-from calibre.utils.magick.draw import save_cover_data_to
+from calibre.utils.date import parse_only_date
+from calibre.utils.magick.draw import save_cover_data_to, identify_data
 from calibre import guess_type, guess_all_extensions, prints, force_unicode
 from calibre.ebooks.metadata import MetaInformation, check_isbn
 from calibre.ebooks.chardet import xml_to_unicode
@@ -33,7 +34,7 @@ class Context(object):
 
     def __init__(self, root):
         try:
-            self.fb_ns = root.nsmap[root.prefix]
+            self.fb_ns = root.nsmap[root.prefix] or NAMESPACES['fb2']
         except Exception:
             self.fb_ns = NAMESPACES['fb2']
         self.namespaces = {
@@ -86,7 +87,7 @@ def get_metadata(stream):
     root = _get_fbroot(stream)
     ctx = Context(root)
     book_title = _parse_book_title(root, ctx)
-    authors = _parse_authors(root, ctx)
+    authors = _parse_authors(root, ctx) or [_('Unknown')]
 
     # fallback for book_title
     if book_title:
@@ -209,8 +210,9 @@ def _parse_cover_data(root, imgid, mi, ctx):
         if mime_extensions:
             pic_data = elm_binary[0].text
             if pic_data:
-                mi.cover_data = (mime_extensions[0][1:],
-                        base64_decode(pic_data.strip()))
+                cdata = base64_decode(pic_data.strip())
+                fmt = identify_data(cdata)[-1]
+                mi.cover_data = (fmt, cdata)
         else:
             prints("WARNING: Unsupported coverpage mime-type '%s' (id=#%s)" % (mimetype, imgid))
 
@@ -226,7 +228,7 @@ def _parse_tags(root, mi, ctx):
 
 def _parse_series(root, mi, ctx):
     # calibri supports only 1 series: use the 1-st one
-    # pick up sequence but only from 1 secrion in prefered order
+    # pick up sequence but only from 1 secrion in preferred order
     # except <src-title-info>
     xp_ti = '//fb:title-info/fb:sequence[1]'
     xp_pi = '//fb:publish-info/fb:sequence[1]'
@@ -235,7 +237,10 @@ def _parse_series(root, mi, ctx):
     if elms_sequence:
         mi.series = elms_sequence[0].get('name', None)
         if mi.series:
-            mi.series_index = elms_sequence[0].get('number', None)
+            try:
+                mi.series_index = float('.'.join(elms_sequence[0].get('number', None).split()[:2]))
+            except Exception:
+                pass
 
 def _parse_isbn(root, mi, ctx):
     # some people try to put several isbn in this field, but it is not allowed.  try to stick to the 1-st one in this case
@@ -265,7 +270,7 @@ def _parse_pubdate(root, mi, ctx):
     year = ctx.XPath('number(//fb:publish-info/fb:year/text())')(root)
     if float.is_integer(year):
         # only year is available, so use 2nd of June
-        mi.pubdate = datetime.date(int(year), 6, 2)
+        mi.pubdate = parse_only_date(type(u'')(int(year)))
 
 def _parse_language(root, mi, ctx):
     language = ctx.XPath('string(//fb:title-info/fb:lang/text())')(root)

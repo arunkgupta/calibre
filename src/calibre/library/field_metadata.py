@@ -8,22 +8,6 @@ from collections import OrderedDict
 
 from calibre.utils.config_base import tweaks
 
-class TagsIcons(dict):
-    '''
-    If the client wants icons to be in the tag structure, this class must be
-    instantiated and filled in with real icons. If this class is instantiated
-    and passed to get_categories, All items must be given a value not None
-    '''
-
-    category_icons = ['authors', 'series', 'formats', 'publisher', 'rating',
-                      'news',    'tags',   'custom:', 'user:',     'search',
-                      'identifiers', 'languages', 'gst']
-    def __init__(self, icon_dict):
-        for a in self.category_icons:
-            if a not in icon_dict:
-                raise ValueError('Missing category icon [%s]'%a)
-            self[a] = icon_dict[a]
-
 category_icon_map = {
                     'authors'    : 'user_profile.png',
                     'series'     : 'series.png',
@@ -447,6 +431,15 @@ class FieldMetadata(dict):
         return [k for k in self._tb_cats.keys()
                 if self._tb_cats[k]['kind']=='field' and
                    self._tb_cats[k]['datatype'] is not None]
+
+    def ui_sortable_field_keys(self):
+        ans = {k:self._tb_cats[k]['name'] for k in set(self.sortable_field_keys()) - {
+            'sort', 'author_sort', 'au_map', 'series_sort', 'marked',
+            'series_index', 'path', 'formats', 'identifiers', 'uuid',
+            'comments',
+        } if self._tb_cats[k]['name']}
+        ans['cover'] = _('Has cover')
+        return ans
 
     def displayable_field_keys(self):
         return [k for k in self._tb_cats.keys()

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -230,6 +230,8 @@ startswith = _make_func(_strcmp_template, 'startswith', collator='_collator', co
 primary_startswith = _make_func(_strcmp_template, 'primary_startswith', collator='_primary_collator', collator_func='primary_collator', func='startswith')
 
 safe_chr = _icu.chr
+
+ord_string = _icu.ord_string
 
 def character_name(string):
     try:

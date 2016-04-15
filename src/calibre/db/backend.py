@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -8,12 +8,12 @@ __copyright__ = '2011, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
 # Imports {{{
-import os, shutil, uuid, json, glob, time, cPickle, hashlib, errno
+import os, shutil, uuid, json, glob, time, cPickle, hashlib, errno, sys
 from functools import partial
 
 import apsw
 
-from calibre import isbytestring, force_unicode, prints
+from calibre import isbytestring, force_unicode, prints, as_unicode
 from calibre.constants import (iswindows, filesystem_encoding,
         preferred_encoding)
 from calibre.ptempfile import PersistentTemporaryFile, TemporaryFile
@@ -28,7 +28,8 @@ from calibre.utils.config import to_json, from_json, prefs, tweaks
 from calibre.utils.date import utcfromtimestamp, parse_date
 from calibre.utils.filenames import (
     is_case_sensitive, samefile, hardlink_file, ascii_filename,
-    WindowsAtomicFolderMove, atomic_rename, remove_dir_if_empty)
+    WindowsAtomicFolderMove, atomic_rename, remove_dir_if_empty,
+    copytree_using_links, copyfile_using_links)
 from calibre.utils.magick.draw import save_cover_data_to
 from calibre.utils.formatter_functions import load_user_template_functions
 from calibre.db.tables import (OneToOneTable, ManyToOneTable, ManyToManyTable,
@@ -46,6 +47,7 @@ Differences in semantics from pysqlite:
 '''
 CUSTOM_DATA_TYPES = frozenset(['rating', 'text', 'comments', 'datetime',
     'int', 'float', 'bool', 'series', 'composite', 'enumeration'])
+WINDOWS_RESERVED_NAMES = frozenset('CON PRN AUX NUL COM1 COM2 COM3 COM4 COM5 COM6 COM7 COM8 COM9 LPT1 LPT2 LPT3 LPT4 LPT5 LPT6 LPT7 LPT8 LPT9'.split())
 
 
 class DynamicFilter(object):  # {{{
@@ -90,7 +92,9 @@ class DBPrefs(dict):  # {{{
         return json.loads(raw, object_hook=from_json)
 
     def to_raw(self, val):
-        return json.dumps(val, indent=2, default=to_json)
+        # sort_keys=True is required so that the serialization of dictionaries is
+        # not random, which is needed for the changed check in __setitem__
+        return json.dumps(val, indent=2, default=to_json, sort_keys=True)
 
     def has_setting(self, key):
         return key in self
@@ -106,11 +110,19 @@ class DBPrefs(dict):  # {{{
         self.db.execute('DELETE FROM preferences WHERE key=?', (key,))
 
     def __setitem__(self, key, val):
-        if self.disable_setting:
-            return
-        raw = self.to_raw(val)
-        self.db.execute('INSERT OR REPLACE INTO preferences (key,val) VALUES (?,?)', (key, raw))
-        dict.__setitem__(self, key, val)
+        if not self.disable_setting:
+            raw = self.to_raw(val)
+            with self.db.conn:
+                try:
+                    dbraw = self.db.execute('SELECT id,val FROM preferences WHERE key=?', (key,)).next()
+                except StopIteration:
+                    dbraw = None
+                if dbraw is None or dbraw[1] != raw:
+                    if dbraw is None:
+                        self.db.execute('INSERT INTO preferences (key,val) VALUES (?,?)', (key, raw))
+                    else:
+                        self.db.execute('UPDATE preferences SET val=? WHERE id=?', (raw, dbraw[0]))
+                    dict.__setitem__(self, key, val)
 
     def set(self, key, val):
         self.__setitem__(key, val)
@@ -300,7 +312,8 @@ class DB(object):
     # Initialize database {{{
 
     def __init__(self, library_path, default_prefs=None, read_only=False,
-                 restore_all_prefs=False, progress_callback=lambda x, y:True):
+                 restore_all_prefs=False, progress_callback=lambda x, y:True,
+                 load_user_formatter_functions=True):
         try:
             if isbytestring(library_path):
                 library_path = library_path.decode(filesystem_encoding)
@@ -376,7 +389,8 @@ class DB(object):
         self.initialize_prefs(default_prefs, restore_all_prefs, progress_callback)
         self.initialize_custom_columns()
         self.initialize_tables()
-        load_user_template_functions(self.library_id,
+        if load_user_formatter_functions:
+            load_user_template_functions(self.library_id,
                                         self.prefs.get('user_template_functions', []))
 
     def initialize_prefs(self, default_prefs, restore_all_prefs, progress_callback):  # {{{
@@ -430,6 +444,7 @@ class DB(object):
         defs['virt_libs_hidden'] = defs['virt_libs_order'] = ()
         defs['update_all_last_mod_dates_on_start'] = False
         defs['field_under_covers_in_grid'] = 'title'
+        defs['cover_browser_title_template'] = '{title}'
 
         # Migrate the bool tristate tweak
         defs['bools_are_tristate'] = \
@@ -734,7 +749,8 @@ class DB(object):
 
         base = max(self.FIELD_MAP.itervalues())
 
-        for label_, data in self.custom_column_label_map.iteritems():
+        for label_ in sorted(self.custom_column_label_map):
+            data = self.custom_column_label_map[label_]
             label = self.field_metadata.custom_field_prefix + label_
             metadata = self.field_metadata[label].copy()
             link_table = self.custom_table_names(data['num'])[1]
@@ -1098,7 +1114,9 @@ class DB(object):
         if self.is_deletable(path):
             try:
                 shutil.rmtree(path)
-            except:
+            except EnvironmentError as e:
+                if e.errno == errno.ENOENT and not os.path.exists(path):
+                    return
                 import traceback
                 traceback.print_exc()
                 time.sleep(1)  # In case something has temporarily locked a file
@@ -1122,6 +1140,8 @@ class DB(object):
         if not author:
             author = ascii_filename(_('Unknown')).decode(
                     'ascii', 'replace')
+        if author.upper() in WINDOWS_RESERVED_NAMES:
+            author += 'w'
         return '%s/%s%s' % (author, title, book_id)
 
     def construct_file_name(self, book_id, title, author, extlen):
@@ -1219,6 +1239,12 @@ class DB(object):
             shutil.copyfile(candidates[0], fmt_path)
             return fmt_path
 
+    def cover_abspath(self, book_id, path):
+        path = os.path.join(self.library_path, path)
+        fmt_path = os.path.join(path, 'cover.jpg')
+        if os.path.exists(fmt_path):
+            return fmt_path
+
     def apply_to_format(self, book_id, path, fname, fmt, func, missing_value=None):
         path = self.format_abspath(book_id, fmt, fname, path)
         if path is None:
@@ -1272,7 +1298,7 @@ class DB(object):
         except EnvironmentError:
             pass  # Cover doesn't exist
 
-    def copy_cover_to(self, path, dest, windows_atomic_move=None, use_hardlink=False):
+    def copy_cover_to(self, path, dest, windows_atomic_move=None, use_hardlink=False, report_file_size=None):
         path = os.path.abspath(os.path.join(self.library_path, path, 'cover.jpg'))
         if windows_atomic_move is not None:
             if not isinstance(dest, basestring):
@@ -1287,14 +1313,18 @@ class DB(object):
                     f = lopen(path, 'rb')
                 except (IOError, OSError):
                     time.sleep(0.2)
-                try:
-                    f = lopen(path, 'rb')
-                except (IOError, OSError) as e:
-                    # Ensure the path that caused this error is reported
-                    raise Exception('Failed to open %r with error: %s' % (path, e))
+                    try:
+                        f = lopen(path, 'rb')
+                    except (IOError, OSError) as e:
+                        # Ensure the path that caused this error is reported
+                        raise Exception('Failed to open %r with error: %s' % (path, e))
 
                 with f:
                     if hasattr(dest, 'write'):
+                        if report_file_size is not None:
+                            f.seek(0, os.SEEK_END)
+                            report_file_size(f.tell())
+                            f.seek(0)
                         shutil.copyfileobj(f, dest)
                         if hasattr(dest, 'flush'):
                             dest.flush()
@@ -1327,7 +1357,7 @@ class DB(object):
         with f:
             return True, f.read(), stat.st_mtime
 
-    def set_cover(self, book_id, path, data):
+    def set_cover(self, book_id, path, data, no_processing=False):
         path = os.path.abspath(os.path.join(self.library_path, path))
         if not os.path.exists(path):
             os.makedirs(path)
@@ -1345,14 +1375,18 @@ class DB(object):
                     time.sleep(0.2)
                     os.remove(path)
         else:
-            try:
-                save_cover_data_to(data, path)
-            except (IOError, OSError):
-                time.sleep(0.2)
-                save_cover_data_to(data, path)
+            if no_processing:
+                with open(path, 'wb') as f:
+                    f.write(data)
+            else:
+                try:
+                    save_cover_data_to(data, path)
+                except (IOError, OSError):
+                    time.sleep(0.2)
+                    save_cover_data_to(data, path)
 
     def copy_format_to(self, book_id, fmt, fname, path, dest,
-                       windows_atomic_move=None, use_hardlink=False):
+                       windows_atomic_move=None, use_hardlink=False, report_file_size=None):
         path = self.format_abspath(book_id, fmt, fname, path)
         if path is None:
             return False
@@ -1373,6 +1407,10 @@ class DB(object):
         else:
             if hasattr(dest, 'write'):
                 with lopen(path, 'rb') as f:
+                    if report_file_size is not None:
+                        f.seek(0, os.SEEK_END)
+                        report_file_size(f.tell())
+                        f.seek(0)
                     shutil.copyfileobj(f, dest)
                 if hasattr(dest, 'flush'):
                     dest.flush()
@@ -1411,7 +1449,7 @@ class DB(object):
                         if wam is not None:
                             wam.close_handles()
 
-    def add_format(self, book_id, fmt, stream, title, author, path, current_name):
+    def add_format(self, book_id, fmt, stream, title, author, path, current_name, mtime=None):
         fmt = ('.' + fmt.lower()) if fmt else ''
         fname = self.construct_file_name(book_id, title, author, len(fmt))
         path = os.path.join(self.library_path, path)
@@ -1440,8 +1478,12 @@ class DB(object):
             with lopen(dest, 'wb') as f:
                 shutil.copyfileobj(stream, f)
                 size = f.tell()
+            if mtime is not None:
+                os.utime(dest, (mtime, mtime))
         elif os.path.exists(dest):
             size = os.path.getsize(dest)
+            if mtime is not None:
+                os.utime(dest, (mtime, mtime))
 
         return size, fname
 
@@ -1538,7 +1580,16 @@ class DB(object):
             with lopen(path, 'wb') as f:
                 f.write(raw)
         except EnvironmentError:
-            os.makedirs(os.path.dirname(path))
+            exc_info = sys.exc_info()
+            try:
+                os.makedirs(os.path.dirname(path))
+            except EnvironmentError as err:
+                if err.errno == errno.EEXIST:
+                    # Parent directory already exists, re-raise original exception
+                    raise exc_info[0], exc_info[1], exc_info[2]
+                raise
+            finally:
+                del exc_info
             with lopen(path, 'wb') as f:
                 f.write(raw)
 
@@ -1635,48 +1686,73 @@ class DB(object):
         items = items.intersection(paths)
         return items, path_map
 
-    def move_library_to(self, all_paths, newloc, progress=lambda x: x):
+    def move_library_to(self, all_paths, newloc, progress=(lambda item_name, item_count, total: None), abort=None):
         if not os.path.exists(newloc):
             os.makedirs(newloc)
-        old_dirs = set()
+        old_dirs, old_files = set(), set()
         items, path_map = self.get_top_level_move_items(all_paths)
-        for x in items:
+        total = len(items) + 1
+        for i, x in enumerate(items):
+            if abort is not None and abort.is_set():
+                return
             src = os.path.join(self.library_path, x)
             dest = os.path.join(newloc, path_map[x])
             if os.path.isdir(src):
                 if os.path.exists(dest):
                     shutil.rmtree(dest)
-                shutil.copytree(src, dest)
+                copytree_using_links(src, dest, dest_is_parent=False)
                 old_dirs.add(src)
             else:
                 if os.path.exists(dest):
                     os.remove(dest)
-                shutil.copyfile(src, dest)
+                copyfile_using_links(src, dest, dest_is_dir=False)
+                old_files.add(src)
             x = path_map[x]
             if not isinstance(x, unicode):
                 x = x.decode(filesystem_encoding, 'replace')
-            progress(x)
+            progress(x, i+1, total)
 
         dbpath = os.path.join(newloc, os.path.basename(self.dbpath))
-        opath = self.dbpath
+        odir = self.library_path
         self.conn.close()
         self.library_path, self.dbpath = newloc, dbpath
         if self._conn is not None:
             self._conn.close()
         self._conn = None
-        self.conn
-        try:
-            os.unlink(opath)
-        except:
-            pass
         for loc in old_dirs:
             try:
                 shutil.rmtree(loc)
-            except:
-                pass
+            except EnvironmentError as e:
+                if os.path.exists(loc):
+                    prints('Failed to delete:', loc, 'with error:', as_unicode(e))
+        for loc in old_files:
+            try:
+                os.remove(loc)
+            except EnvironmentError as e:
+                if e.errno != errno.ENOENT:
+                    prints('Failed to delete:', loc, 'with error:', as_unicode(e))
+        try:
+            os.rmdir(odir)
+        except EnvironmentError:
+            pass
+        self.conn  # Connect to the moved metadata.db
+        progress(_('Completed'), total, total)
 
     def restore_book(self, book_id, path, formats):
         self.execute('UPDATE books SET path=? WHERE id=?', (path.replace(os.sep, '/'), book_id))
         vals = [(book_id, fmt, size, name) for fmt, size, name in formats]
         self.executemany('INSERT INTO data (book,format,uncompressed_size,name) VALUES (?,?,?,?)', vals)
+
+    def backup_database(self, path):
+        # We have to open a new connection to self.dbpath, until this issue is fixed:
+        # https://github.com/rogerbinns/apsw/issues/199
+        dest_db = apsw.Connection(path)
+        source = apsw.Connection(self.dbpath)
+        with dest_db.backup('main', source, 'main') as b:
+            while not b.done:
+                b.step(100)
+        source.close()
+        dest_db.cursor().execute('DELETE FROM metadata_dirtied; VACUUM;')
+        dest_db.close()
+
     # }}}

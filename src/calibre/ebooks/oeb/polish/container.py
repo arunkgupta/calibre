@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -7,7 +7,7 @@ __license__   = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import os, logging, sys, hashlib, uuid, re, shutil, unicodedata
+import os, logging, sys, hashlib, uuid, re, shutil, unicodedata, errno, time
 from collections import defaultdict
 from io import BytesIO
 from urlparse import urlparse
@@ -17,7 +17,9 @@ from lxml import etree
 from cssutils import replaceUrls, getUrls
 
 from calibre import CurrentDir
+from calibre.constants import iswindows
 from calibre.customize.ui import (plugin_for_input_format, plugin_for_output_format)
+from calibre.ebooks import escape_xpath_attr
 from calibre.ebooks.chardet import xml_to_unicode
 from calibre.ebooks.conversion.plugins.epub_input import (
     ADOBE_OBFUSCATION, IDPF_OBFUSCATION, decrypt_font_data)
@@ -41,7 +43,7 @@ from calibre.utils.zipfile import ZipFile
 exists, join, relpath = os.path.exists, os.path.join, os.path.relpath
 
 
-OEB_FONTS = {guess_type('a.ttf'), guess_type('b.otf'), guess_type('a.woff'), 'application/x-font-ttf', 'application/x-font-otf'}
+OEB_FONTS = {guess_type('a.ttf'), guess_type('b.otf'), guess_type('a.woff'), 'application/x-font-ttf', 'application/x-font-otf', 'application/font-sfnt'}
 OPF_NAMESPACES = {'opf':OPF2_NS, 'dc':DC11_NS}
 
 class CSSPreProcessor(cssp):
@@ -98,8 +100,93 @@ def href_to_name(href, root, base=None):
     fullpath = os.path.join(base, *href.split('/'))
     return abspath_to_name(fullpath, root)
 
+class ContainerBase(object):  # {{{
+    '''
+    A base class that implements just the parsing methods. Useful to create
+    virtual containers for testing.
+    '''
 
-class Container(object):  # {{{
+    #: The mode used to parse HTML and CSS (polishing uses tweak_mode=False and the editor uses tweak_mode=True)
+    tweak_mode = False
+
+    def __init__(self, log):
+        self.log = log
+        self.parsed_cache = {}
+        self.mime_map = {}
+        self.encoding_map = {}
+        self.html_preprocessor = HTMLPreProcessor()
+        self.css_preprocessor = CSSPreProcessor()
+
+    def guess_type(self, name):
+        ' Return the expected mimetype for the specified file name based on its extension. '
+        # epubcheck complains if the mimetype for text documents is set to
+        # text/html in EPUB 2 books. Sigh.
+        ans = guess_type(name)
+        if ans == 'text/html':
+            ans = 'application/xhtml+xml'
+        return ans
+
+    def decode(self, data, normalize_to_nfc=True):
+        """
+        Automatically decode ``data`` into a ``unicode`` object.
+
+        :param normalize_to_nfc: Normalize returned unicode to the NFC normal form as is required by both the EPUB and AZW3 formats.
+        """
+        def fix_data(d):
+            return d.replace('\r\n', '\n').replace('\r', '\n')
+        if isinstance(data, unicode):
+            return fix_data(data)
+        bom_enc = None
+        if data[:4] in {b'\0\0\xfe\xff', b'\xff\xfe\0\0'}:
+            bom_enc = {b'\0\0\xfe\xff':'utf-32-be',
+                       b'\xff\xfe\0\0':'utf-32-le'}[data[:4]]
+            data = data[4:]
+        elif data[:2] in {b'\xff\xfe', b'\xfe\xff'}:
+            bom_enc = {b'\xff\xfe':'utf-16-le', b'\xfe\xff':'utf-16-be'}[data[:2]]
+            data = data[2:]
+        elif data[:3] == b'\xef\xbb\xbf':
+            bom_enc = 'utf-8'
+            data = data[3:]
+        if bom_enc is not None:
+            try:
+                self.used_encoding = bom_enc
+                return fix_data(data.decode(bom_enc))
+            except UnicodeDecodeError:
+                pass
+        try:
+            self.used_encoding = 'utf-8'
+            return fix_data(data.decode('utf-8'))
+        except UnicodeDecodeError:
+            pass
+        data, self.used_encoding = xml_to_unicode(data)
+        if normalize_to_nfc:
+            data = unicodedata.normalize('NFC', data)
+        return fix_data(data)
+
+    def parse_xml(self, data):
+        data, self.used_encoding = xml_to_unicode(
+            data, strip_encoding_pats=True, assume_utf8=True, resolve_entities=True)
+        data = unicodedata.normalize('NFC', data)
+        return etree.fromstring(data, parser=RECOVER_PARSER)
+
+    def parse_xhtml(self, data, fname='<string>', force_html5_parse=False):
+        if self.tweak_mode:
+            return parse_html_tweak(data, log=self.log, decoder=self.decode, force_html5_parse=force_html5_parse)
+        else:
+            try:
+                return parse_html(
+                    data, log=self.log, decoder=self.decode,
+                    preprocessor=self.html_preprocessor, filename=fname,
+                    non_html_file_tags={'ncx'})
+            except NotHTML:
+                return self.parse_xml(data)
+
+    def parse_css(self, data, fname='<string>', is_declaration=False):
+        return parse_css(data, fname=fname, is_declaration=is_declaration, decode=self.decode, log_level=logging.WARNING,
+                         css_preprocessor=(None if self.tweak_mode else self.css_preprocessor))
+# }}}
+
+class Container(ContainerBase):  # {{{
 
     '''
     A container represents an Open EBook as a directory full of files and an
@@ -125,22 +212,18 @@ class Container(object):  # {{{
 
     #: The type of book (epub for EPUB files and azw3 for AZW3 files)
     book_type = 'oeb'
+    #: If this container represents an unzipped book (a directory)
+    is_dir = False
 
     SUPPORTS_TITLEPAGES = True
     SUPPORTS_FILENAMES = True
 
     def __init__(self, rootpath, opfpath, log, clone_data=None):
+        ContainerBase.__init__(self, log)
         self.root = clone_data['root'] if clone_data is not None else os.path.abspath(rootpath)
-        self.log = log
-        self.html_preprocessor = HTMLPreProcessor()
-        self.css_preprocessor = CSSPreProcessor()
-        self.tweak_mode = False
 
-        self.parsed_cache = {}
-        self.mime_map = {}
         self.name_path_map = {}
         self.dirtied = set()
-        self.encoding_map = {}
         self.pretty_print = set()
         self.cloned = False
         self.cache_names = ('parsed_cache', 'mime_map', 'name_path_map', 'encoding_map', 'dirtied', 'pretty_print')
@@ -159,15 +242,6 @@ class Container(object):  # {{{
             for f in filenames:
                 path = join(dirpath, f)
                 name = self.abspath_to_name(path)
-                # OS X silently changes all file names to NFD form. The EPUB
-                # spec requires all text including filenames to be in NFC form.
-                # The proper fix is to implement a VFS that maps between
-                # canonical names and their file system representation, however,
-                # I dont have the time for that now. Note that the container
-                # ensures that all text files are normalized to NFC when
-                # decoding them anyway, so there should be no mismatch between
-                # names in the text and NFC canonical file names.
-                name = unicodedata.normalize('NFC', name)
                 self.name_path_map[name] = path
                 self.mime_map[name] = guess_type(path)
                 # Special case if we have stumbled onto the opf
@@ -206,15 +280,6 @@ class Container(object):  # {{{
                 for name, path in self.name_path_map.iteritems()}
         }
 
-    def guess_type(self, name):
-        ' Return the expected mimetype for the specified file name based on its extension. '
-        # epubcheck complains if the mimetype for text documents is set to
-        # text/html in EPUB 2 books. Sigh.
-        ans = guess_type(name)
-        if ans == 'text/html':
-            ans = 'application/xhtml+xml'
-        return ans
-
     def add_name_to_manifest(self, name):
         ' Add an entry to the manifest for a file with the specified name. Returns the manifest id. '
         all_ids = {x.get('id') for x in self.opf_xpath('//*[@id]')}
@@ -231,6 +296,12 @@ class Container(object):  # {{{
         self.insert_into_xml(manifest, item)
         self.dirty(self.opf_name)
         return item_id
+
+    def manifest_has_name(self, name):
+        ''' Return True if the manifest has an entry corresponding to name '''
+        href = self.name_to_href(name, self.opf_name)
+        all_hrefs = {x.get('href') for x in self.opf_xpath('//opf:manifest/opf:item[@href]')}
+        return href in all_hrefs
 
     def add_file(self, name, data, media_type=None, spine_index=None):
         ''' Add a file to this container. Entries for the file are
@@ -367,7 +438,15 @@ class Container(object):  # {{{
 
         :param root: The base directory. By default the root for this container object is used.
         '''
-        return abspath_to_name(fullpath, root or self.root)
+        # OS X silently changes all file names to NFD form. The EPUB
+        # spec requires all text including filenames to be in NFC form.
+        # The proper fix is to implement a VFS that maps between
+        # canonical names and their file system representation, however,
+        # I dont have the time for that now. Note that the container
+        # ensures that all text files are normalized to NFC when
+        # decoding them anyway, so there should be no mismatch between
+        # names in the text and NFC canonical file names.
+        return unicodedata.normalize('NFC', abspath_to_name(fullpath, root or self.root))
 
     def name_to_abspath(self, name):
         ' Convert a canonical name to an absolute OS dependant path '
@@ -407,43 +486,6 @@ class Container(object):  # {{{
         :meth:`abspath_to_name` for that.'''
         return relpath(path, base or self.root)
 
-    def decode(self, data, normalize_to_nfc=True):
-        """
-        Automatically decode ``data`` into a ``unicode`` object.
-
-        :param normalize_to_nfc: Normalize returned unicode to the NFC normal form as is required by both the EPUB and AZW3 formats.
-        """
-        def fix_data(d):
-            return d.replace('\r\n', '\n').replace('\r', '\n')
-        if isinstance(data, unicode):
-            return fix_data(data)
-        bom_enc = None
-        if data[:4] in {b'\0\0\xfe\xff', b'\xff\xfe\0\0'}:
-            bom_enc = {b'\0\0\xfe\xff':'utf-32-be',
-                       b'\xff\xfe\0\0':'utf-32-le'}[data[:4]]
-            data = data[4:]
-        elif data[:2] in {b'\xff\xfe', b'\xfe\xff'}:
-            bom_enc = {b'\xff\xfe':'utf-16-le', b'\xfe\xff':'utf-16-be'}[data[:2]]
-            data = data[2:]
-        elif data[:3] == b'\xef\xbb\xbf':
-            bom_enc = 'utf-8'
-            data = data[3:]
-        if bom_enc is not None:
-            try:
-                self.used_encoding = bom_enc
-                return fix_data(data.decode(bom_enc))
-            except UnicodeDecodeError:
-                pass
-        try:
-            self.used_encoding = 'utf-8'
-            return fix_data(data.decode('utf-8'))
-        except UnicodeDecodeError:
-            pass
-        data, self.used_encoding = xml_to_unicode(data)
-        if normalize_to_nfc:
-            data = unicodedata.normalize('NFC', data)
-        return fix_data(data)
-
     def ok_to_be_unmanifested(self, name):
         return name in self.names_that_need_not_be_manifested
 
@@ -461,24 +503,6 @@ class Container(object):  # {{{
     def names_that_must_not_be_changed(self):
         ' Set of names that must never be renamed. Depends on the ebook file format. '
         return set()
-
-    def parse_xml(self, data):
-        data, self.used_encoding = xml_to_unicode(
-            data, strip_encoding_pats=True, assume_utf8=True, resolve_entities=True)
-        data = unicodedata.normalize('NFC', data)
-        return etree.fromstring(data, parser=RECOVER_PARSER)
-
-    def parse_xhtml(self, data, fname='<string>', force_html5_parse=False):
-        if self.tweak_mode:
-            return parse_html_tweak(data, log=self.log, decoder=self.decode, force_html5_parse=force_html5_parse)
-        else:
-            try:
-                return parse_html(
-                    data, log=self.log, decoder=self.decode,
-                    preprocessor=self.html_preprocessor, filename=fname,
-                    non_html_file_tags={'ncx'})
-            except NotHTML:
-                return self.parse_xml(data)
 
     def parse(self, path, mime):
         with open(path, 'rb') as src:
@@ -503,10 +527,6 @@ class Container(object):  # {{{
         if decode and (mime in OEB_STYLES or mime in OEB_DOCS or mime == 'text/plain' or mime[-4:] in {'+xml', '/xml'}):
             ans = self.decode(ans, normalize_to_nfc=normalize_to_nfc)
         return ans
-
-    def parse_css(self, data, fname='<string>', is_declaration=False):
-        return parse_css(data, fname=fname, is_declaration=is_declaration, decode=self.decode, log_level=logging.WARNING,
-                         css_preprocessor=(None if self.tweak_mode else self.css_preprocessor))
 
     def parsed(self, name):
         ''' Return a parsed representation of the file specified by name. For
@@ -604,7 +624,7 @@ class Container(object):  # {{{
 
     @property
     def spine_items(self):
-        ''' An iterator yielding canonical name for every item in the
+        ''' An iterator yielding the path for every item in the
         books' spine. See also: :attr:`spine_iter` and :attr:`spine_items`. '''
         for name, linear in self.spine_names:
             yield self.name_path_map[name]
@@ -820,12 +840,12 @@ class Container(object):  # {{{
 
     def serialize_item(self, name):
         ''' Convert a parsed object (identified by canonical name) into a bytestring. See :meth:`parsed`. '''
-        data = self.parsed(name)
+        data = root = self.parsed(name)
         if name == self.opf_name:
             self.format_opf()
         data = serialize(data, self.mime_map[name], pretty_print=name in
                          self.pretty_print)
-        if name == self.opf_name:
+        if name == self.opf_name and root.nsmap.get(None) == OPF2_NS:
             # Needed as I can't get lxml to output opf:role and
             # not output <opf:metadata> as well
             data = re.sub(br'(<[/]{0,1})opf:', r'\1', data)
@@ -857,11 +877,8 @@ class Container(object):  # {{{
         path = self.name_to_abspath(name)
         return os.path.getsize(path)
 
-    def open(self, name, mode='rb'):
-        ''' Open the file pointed to by name for direct read/write. Note that
-        this will commit the file if it is dirtied and remove it from the parse
-        cache. You must finish with this file before accessing the parsed
-        version of it again, or bad things will happen. '''
+    def get_file_path_for_processing(self, name, allow_modification=True):
+        ''' Similar to open() except that it returns a file path, instead of an open file object. '''
         if name in self.dirtied:
             self.commit_item(name)
         self.parsed_cache.pop(name, False)
@@ -870,13 +887,26 @@ class Container(object):  # {{{
         if not os.path.exists(base):
             os.makedirs(base)
         else:
-            if self.cloned and mode not in {'r', 'rb'} and os.path.exists(path) and nlinks_file(path) > 1:
+            if self.cloned and allow_modification and os.path.exists(path) and nlinks_file(path) > 1:
                 # Decouple this file from its links
                 temp = path + 'xxx'
                 shutil.copyfile(path, temp)
-                os.unlink(path)
+                try:
+                    os.unlink(path)
+                except EnvironmentError:
+                    if not iswindows:
+                        raise
+                    time.sleep(1)  # Wait for whatever has locked the file to release it
+                    os.unlink(path)
                 os.rename(temp, path)
-        return open(path, mode)
+        return path
+
+    def open(self, name, mode='rb'):
+        ''' Open the file pointed to by name for direct read/write. Note that
+        this will commit the file if it is dirtied and remove it from the parse
+        cache. You must finish with this file before accessing the parsed
+        version of it again, or bad things will happen. '''
+        return open(self.get_file_path_for_processing(name, mode not in {'r', 'rb'}), mode)
 
     def commit(self, outpath=None, keep_parsed=False):
         '''
@@ -907,6 +937,21 @@ class ObfuscationKeyMissing(InvalidEpub):
     pass
 
 OCF_NS = 'urn:oasis:names:tc:opendocument:xmlns:container'
+VCS_IGNORE_FILES = frozenset('.gitignore .hgignore .agignore .bzrignore'.split())
+VCS_DIRS = frozenset(('.git', '.hg', '.svn', '.bzr'))
+
+def walk_dir(basedir):
+    for dirpath, dirnames, filenames in os.walk(basedir):
+        for vcsdir in VCS_DIRS:
+            try:
+                dirnames.remove(vcsdir)
+            except Exception:
+                pass
+        is_root = os.path.abspath(os.path.normcase(dirpath)) == os.path.abspath(os.path.normcase(basedir))
+        yield is_root, dirpath, None
+        for fname in filenames:
+            if fname not in VCS_IGNORE_FILES:
+                yield is_root, dirpath, fname
 
 class EpubContainer(Container):
 
@@ -924,7 +969,7 @@ class EpubContainer(Container):
     def __init__(self, pathtoepub, log, clone_data=None, tdir=None):
         if clone_data is not None:
             super(EpubContainer, self).__init__(None, None, log, clone_data=clone_data)
-            for x in ('pathtoepub', 'obfuscated_fonts'):
+            for x in ('pathtoepub', 'obfuscated_fonts', 'is_dir'):
                 setattr(self, x, clone_data[x])
             return
 
@@ -933,16 +978,28 @@ class EpubContainer(Container):
             tdir = PersistentTemporaryDirectory('_epub_container')
         tdir = os.path.abspath(os.path.realpath(tdir))
         self.root = tdir
-        with open(self.pathtoepub, 'rb') as stream:
-            try:
-                zf = ZipFile(stream)
-                zf.extractall(tdir)
-            except:
-                log.exception('EPUB appears to be invalid ZIP file, trying a'
-                        ' more forgiving ZIP parser')
-                from calibre.utils.localunzip import extractall
-                stream.seek(0)
-                extractall(stream, path=tdir)
+        self.is_dir = os.path.isdir(pathtoepub)
+        if self.is_dir:
+            for is_root, dirpath, fname in walk_dir(self.pathtoepub):
+                if is_root:
+                    base = tdir
+                else:
+                    base = os.path.join(tdir, os.path.relpath(dirpath, self.pathtoepub))
+                    if fname is None:
+                        os.mkdir(base)
+                if fname is not None:
+                    shutil.copy(os.path.join(dirpath, fname), os.path.join(base, fname))
+        else:
+            with open(self.pathtoepub, 'rb') as stream:
+                try:
+                    zf = ZipFile(stream)
+                    zf.extractall(tdir)
+                except:
+                    log.exception('EPUB appears to be invalid ZIP file, trying a'
+                            ' more forgiving ZIP parser')
+                    from calibre.utils.localunzip import extractall
+                    stream.seek(0)
+                    extractall(stream, path=tdir)
         try:
             os.remove(join(tdir, 'mimetype'))
         except EnvironmentError:
@@ -975,6 +1032,7 @@ class EpubContainer(Container):
         ans = super(EpubContainer, self).clone_data(dest_dir)
         ans['pathtoepub'] = self.pathtoepub
         ans['obfuscated_fonts'] = self.obfuscated_fonts.copy()
+        ans['is_dir'] = self.is_dir
         return ans
 
     def rename(self, old_name, new_name):
@@ -1057,7 +1115,7 @@ class EpubContainer(Container):
                 package_id = val
                 break
         if package_id is not None:
-            for elem in self.opf_xpath('//*[@id=%r]'%package_id):
+            for elem in self.opf_xpath('//*[@id=%s]'%escape_xpath_attr(package_id)):
                 if elem.text:
                     raw_unique_identifier = elem.text
                     break
@@ -1104,13 +1162,42 @@ class EpubContainer(Container):
                 f.write(decrypt_font_data(key, data, alg))
         if outpath is None:
             outpath = self.pathtoepub
-        from calibre.ebooks.tweak import zip_rebuilder
-        with open(join(self.root, 'mimetype'), 'wb') as f:
-            f.write(guess_type('a.epub'))
-        zip_rebuilder(self.root, outpath)
-        for name, data in restore_fonts.iteritems():
-            with self.open(name, 'wb') as f:
-                f.write(data)
+        if self.is_dir:
+            # First remove items from the source dir that do not exist any more
+            for is_root, dirpath, fname in walk_dir(self.pathtoepub):
+                if fname is not None:
+                    if is_root and fname == 'mimetype':
+                        continue
+                    base = self.root if is_root else os.path.join(self.root, os.path.relpath(dirpath, self.pathtoepub))
+                    fpath = os.path.join(base, fname)
+                    if not os.path.exists(fpath):
+                        os.remove(os.path.join(dirpath, fname))
+                        try:
+                            os.rmdir(dirpath)
+                        except EnvironmentError as err:
+                            if err.errno != errno.ENOTEMPTY:
+                                raise
+            # Now copy over everything from root to source dir
+            for dirpath, dirnames, filenames in os.walk(self.root):
+                is_root = os.path.abspath(os.path.normcase(dirpath)) == os.path.abspath(os.path.normcase(self.root))
+                base = self.pathtoepub if is_root else os.path.join(self.pathtoepub, os.path.relpath(dirpath, self.root))
+                try:
+                    os.mkdir(base)
+                except EnvironmentError as err:
+                    if err.errno != errno.EEXIST:
+                        raise
+                for fname in filenames:
+                    with open(os.path.join(dirpath, fname), 'rb') as src, open(os.path.join(base, fname), 'wb') as dest:
+                        shutil.copyfileobj(src, dest)
+
+        else:
+            from calibre.ebooks.tweak import zip_rebuilder
+            with open(join(self.root, 'mimetype'), 'wb') as f:
+                f.write(guess_type('a.epub'))
+            zip_rebuilder(self.root, outpath)
+            for name, data in restore_fonts.iteritems():
+                with self.open(name, 'wb') as f:
+                    f.write(data)
 
     @dynamic_property
     def path_to_ebook(self):
@@ -1249,7 +1336,11 @@ class AZW3Container(Container):
 def get_container(path, log=None, tdir=None, tweak_mode=False):
     if log is None:
         log = default_log
-    ebook = (AZW3Container if path.rpartition('.')[-1].lower() in {'azw3', 'mobi', 'original_azw3', 'original_mobi'}
+    try:
+        isdir = os.path.isdir(path)
+    except Exception:
+        isdir = False
+    ebook = (AZW3Container if path.rpartition('.')[-1].lower() in {'azw3', 'mobi', 'original_azw3', 'original_mobi'} and not isdir
             else EpubContainer)(path, log, tdir=tdir)
     ebook.tweak_mode = tweak_mode
     return ebook

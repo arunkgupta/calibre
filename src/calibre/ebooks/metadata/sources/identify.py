@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -7,13 +7,14 @@ __license__   = 'GPL v3'
 __copyright__ = '2011, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import time
+import time, re
 from datetime import datetime
 from Queue import Queue, Empty
 from threading import Thread
 from io import BytesIO
 from operator import attrgetter
 from urlparse import urlparse
+from urllib import quote
 
 from calibre.customize.ui import metadata_plugins, all_metadata_plugins
 from calibre.ebooks.metadata import check_issn
@@ -25,6 +26,7 @@ from calibre.utils.date import utc_tz, as_utc
 from calibre.utils.html2text import html2text
 from calibre.utils.icu import lower
 from calibre.utils.date import UNDEFINED_DATE
+from calibre.utils.formatter import EvalFormatter
 
 # Download worker {{{
 class Worker(Thread):
@@ -477,9 +479,9 @@ def identify(log, abort,  # {{{
                 if f == 'series':
                     result.series_index = dummy.series_index
             result.relevance_in_source = i
-            result.has_cached_cover_url = (plugin.cached_cover_url_is_reliable
-                    and plugin.get_cached_cover_url(result.identifiers) is not
-                    None)
+            result.has_cached_cover_url = (
+                plugin.cached_cover_url_is_reliable and
+                plugin.get_cached_cover_url(result.identifiers) is not None)
             result.identify_plugin = plugin
             if msprefs['txt_comments']:
                 if plugin.has_html_comments and result.comments:
@@ -494,9 +496,14 @@ def identify(log, abort,  # {{{
 
     log('We have %d merged results, merging took: %.2f seconds' %
             (len(results), time.time() - start_time))
+    tm_rules = msprefs['tag_map_rules']
+    if tm_rules:
+        from calibre.ebooks.metadata.tag_mapper import map_tags
 
     max_tags = msprefs['max_tags']
     for r in results:
+        if tm_rules:
+            r.tags = map_tags(r.tags, tm_rules)
         r.tags = r.tags[:max_tags]
         if getattr(r.pubdate, 'year', 2000) <= UNDEFINED_DATE.year:
             r.pubdate = None
@@ -517,12 +524,26 @@ def identify(log, abort,  # {{{
 # }}}
 
 def urls_from_identifiers(identifiers):  # {{{
-    identifiers = dict([(k.lower(), v) for k, v in identifiers.iteritems()])
+    identifiers = {k.lower():v for k, v in identifiers.iteritems()}
     ans = []
+    rules = msprefs['id_link_rules']
+    if rules:
+        formatter = EvalFormatter()
+        for k, val in identifiers.iteritems():
+            vals = {'id':quote(val)}
+            items = rules.get(k) or ()
+            for name, template in items:
+                try:
+                    url = formatter.safe_format(template, vals, '', vals)
+                except Exception:
+                    import traceback
+                    traceback.format_exc()
+                    continue
+                ans.append((name, k, val, url))
     for plugin in all_metadata_plugins():
         try:
-            id_type, id_val, url = plugin.get_book_url(identifiers)
-            ans.append((plugin.get_book_url_name(id_type, id_val, url), id_type, id_val, url))
+            for id_type, id_val, url in plugin.get_book_urls(identifiers):
+                ans.append((plugin.get_book_url_name(id_type, id_val, url), id_type, id_val, url))
         except:
             pass
     isbn = identifiers.get('isbn', None)
@@ -545,13 +566,12 @@ def urls_from_identifiers(identifiers):  # {{{
     if issn:
         ans.append((issn, 'issn', issn,
             'http://www.worldcat.org/issn/'+issn))
-    for x in ('uri', 'url'):
-        url = identifiers.get(x, None)
-        if url and url.startswith('http'):
+    for k, url in identifiers.iteritems():
+        if url and re.match(r'ur[il]\d*$', k) is not None and url.partition(':')[0].lower() in {'http', 'file', 'https'}:
             url = url[:8].replace('|', ':') + url[8:].replace('|', ',')
             parts = urlparse(url)
-            name = parts.netloc
-            ans.append((name, x, url, url))
+            name = parts.netloc or parts.path
+            ans.append((name, k, url, url))
     return ans
 # }}}
 

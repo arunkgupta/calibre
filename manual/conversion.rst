@@ -17,7 +17,7 @@ use the edited ebook as input for conversion into other formats in calibre.
 
 This document will refer mainly to the conversion settings as found in the
 conversion dialog, pictured below. All these settings are also available via
-command line interface to conversion, documented at :doc:`generated/|lang|/ebook-convert`. In
+command line interface to conversion, documented at :doc:`generated/en/ebook-convert`. In
 calibre, you can obtain help on any individual setting by holding your mouse over
 it, a tooltip will appear describing the setting.
 
@@ -233,7 +233,7 @@ There are a few more options in this section.
 :guilabel:`Input character encoding`
     Older documents sometimes don't specify their character encoding. When converted, this can
     result in non-English characters or special characters like smart quotes being corrupted. 
-    calibre tries to auto-detect the character encoding of the source document, but it does not'
+    calibre tries to auto-detect the character encoding of the source document, but it does not
     always succeed. You can force it to assume a particular character encoding by using this setting.
     `cp1252` is a common encoding for documents produced using windows software. You should also read
     :ref:`char-encoding-faq` for more on encoding issues.
@@ -390,7 +390,7 @@ By default, calibre uses the following expression for chapter detection::
 
     //*[((name()='h1' or name()='h2') and re:test(., 'chapter|book|section|part\s+', 'i')) or @class = 'chapter']
 
-This expression is rather complex, because it tries to handle a number of common cases simulataneously. What it means
+This expression is rather complex, because it tries to handle a number of common cases simultaneously. What it means
 is that calibre will assume chapters start at either `<h1>` or `<h2>` tags that have any of the words 
 `(chapter, book, section or part)` in them or that have the `class="chapter"` attribute. 
 

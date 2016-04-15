@@ -16,8 +16,10 @@ let g:syntastic_cpp_include_dirs = [
             \'/usr/include/ImageMagick',
             \]
 let g:syntastic_c_include_dirs = g:syntastic_cpp_include_dirs
+let g:syntastic_python_flake8_exec = 'flake8-python2'
 
 set wildignore+=resources/viewer/mathjax/*
+set wildignore+=resources/rapydscript/lib/*
 set wildignore+=build/*
 set wildignore+=dist/*
 set wildignore+=manual/generated/*

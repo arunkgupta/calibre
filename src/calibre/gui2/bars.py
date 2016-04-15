@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -7,15 +7,56 @@ __license__   = 'GPL v3'
 __copyright__ = '2011, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-from functools import partial
-
 import sip
 from PyQt5.Qt import (
-    Qt, QAction, QMenu, QObject, QToolBar, QToolButton, QSize, pyqtSignal, QTimer)
+    Qt, QAction, QMenu, QObject, QToolBar, QToolButton, QSize, pyqtSignal,
+    QTimer, QPropertyAnimation, QEasingCurve, pyqtProperty, QPainter, QWidget)
 
 from calibre.constants import isosx
-from calibre.gui2.throbber import create_donate_widget
-from calibre.gui2 import gprefs, workaround_broken_under_mouse, native_menubar_defaults
+from calibre.gui2 import gprefs, native_menubar_defaults, config
+
+class RevealBar(QWidget):  # {{{
+
+    def __init__(self, parent):
+        QWidget.__init__(self, parent)
+        self.setVisible(False)
+        self._animated_size = 1.0
+        self.animation = QPropertyAnimation(self, b'animated_size', self)
+        self.animation.setEasingCurve(QEasingCurve.Linear)
+        self.animation.setDuration(1000), self.animation.setStartValue(0.0), self.animation.setEndValue(1.0)
+        self.animation.valueChanged.connect(self.animation_value_changed)
+        self.animation.finished.connect(self.animation_done)
+
+    @pyqtProperty(float)
+    def animated_size(self):
+        return self._animated_size
+
+    @animated_size.setter
+    def animated_size(self, val):
+        self._animated_size = val
+
+    def animation_value_changed(self, *args):
+        self.update()
+
+    def animation_done(self):
+        self.setVisible(False)
+        self.update()
+
+    def start(self, bar):
+        self.setGeometry(bar.geometry())
+        self.setVisible(True)
+        self.animation.start()
+
+    def paintEvent(self, ev):
+        if self._animated_size < 1.0:
+            rect = self.rect()
+            painter = QPainter(self)
+            pal = self.palette()
+            col = pal.color(pal.Button)
+            rect.setLeft(rect.left() + (rect.width() * self._animated_size))
+            painter.setClipRect(rect)
+            painter.fillRect(self.rect(), col)
+# }}}
 
 class ToolBar(QToolBar):  # {{{
 
@@ -41,8 +82,7 @@ class ToolBar(QToolBar):  # {{{
         QToolBar.resizeEvent(self, ev)
         style = self.get_text_style()
         self.setToolButtonStyle(style)
-        if hasattr(self, 'd_widget') and hasattr(self.d_widget, 'filler'):
-            self.d_widget.filler.setVisible(style != Qt.ToolButtonIconOnly)
+        self.donate_button.setToolButtonStyle(style)
 
     def get_text_style(self):
         style = Qt.ToolButtonTextUnderIcon
@@ -92,8 +132,7 @@ class ToolBar(QToolBar):  # {{{
                     bar.setup_tool_button(bar, ac, QToolButton.MenuButtonPopup)
                     ac.setVisible(False)
             elif what == 'Donate':
-                self.d_widget = create_donate_widget(self.donate_button)
-                bar.addWidget(self.d_widget)
+                bar.addWidget(self.donate_button)
                 self.showing_donate = True
             elif what in self.gui.iactions:
                 action = self.gui.iactions[what]
@@ -110,8 +149,6 @@ class ToolBar(QToolBar):  # {{{
         ch.setAutoRaise(True)
         m = ac.menu()
         if m is not None:
-            if workaround_broken_under_mouse is not None:
-                m.aboutToHide.connect(partial(workaround_broken_under_mouse, ch))
             if menu_mode is not None:
                 ch.setPopupMode(menu_mode)
         return ch
@@ -224,7 +261,7 @@ if isosx:
         visibility_changed = pyqtSignal()
 
         def __init__(self, clone, parent, is_top_level=False, clone_shortcuts=True):
-            QAction.__init__(self, clone.text(), parent)
+            QAction.__init__(self, clone.text().replace('&&', '&'), parent)
             self.setMenuRole(QAction.NoRole)  # ensure this action is not moved around by Qt
             self.is_top_level = is_top_level
             self.clone_shortcuts = clone_shortcuts
@@ -439,6 +476,7 @@ class BarsManager(QObject):
                 range(3)]
         self.main_bars = tuple(bars[:2])
         self.child_bars = tuple(bars[2:])
+        self.reveal_bar = RevealBar(parent)
 
         self.menu_bar = MenuBar(self.location_manager, self.parent())
         is_native_menubar = self.menu_bar.is_native_menubar
@@ -474,7 +512,7 @@ class BarsManager(QObject):
         for bar, actions in zip(self.bars, self.bar_actions[:3]):
             bar.init_bar(actions)
 
-    def update_bars(self):
+    def update_bars(self, reveal_bar=False):
         '''
         This shows the correct main toolbar and rebuilds the menubar based on
         whether a device is connected or not. Note that the toolbars are
@@ -490,6 +528,8 @@ class BarsManager(QObject):
             bar.update_lm_actions()
         if main_bar.added_actions:
             main_bar.setVisible(True)
+            if reveal_bar and not config['disable_animations']:
+                self.reveal_bar.start(main_bar)
         if child_bar.added_actions:
             child_bar.setVisible(True)
 
@@ -507,6 +547,7 @@ class BarsManager(QObject):
         for bar in self.bars:
             bar.setIconSize(QSize(sz, sz))
             bar.setToolButtonStyle(style)
-        self.donate_button.set_normal_icon_size(sz, sz)
+        self.donate_button.setIconSize(bar.iconSize())
+        self.donate_button.setToolButtonStyle(style)
 
 

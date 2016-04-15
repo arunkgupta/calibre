@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement
 
@@ -130,6 +130,7 @@ class RecipeInput(InputFormatPlugin):
 
     def postprocess_book(self, oeb, opts, log):
         if self.recipe_object is not None:
+            self.recipe_object.internal_postprocess_book(oeb, opts, log)
             self.recipe_object.postprocess_book(oeb, opts, log)
 
     def specialize(self, oeb, opts, log, output_fmt):

@@ -17,13 +17,13 @@ from calibre.ebooks.lrf.meta import LRFMetaFile
 from calibre import prints
 from calibre.utils.date import parse_date
 
-USAGE='%%prog ebook_file [' + _('options') + ']\n' + \
+USAGE=_('%prog ebook_file [options]\n') + \
 _('''
 Read/Write metadata from/to ebook files.
 
-Supported formats for reading metadata: %(read)s
+Supported formats for reading metadata: {0}
 
-Supported formats for writing metadata: %(write)s
+Supported formats for writing metadata: {1}
 
 Different file types support different kinds of metadata. If you try to set
 some metadata on a file type that does not support it, the metadata will be
@@ -103,7 +103,7 @@ def option_parser():
     for w in metadata_writers():
         writers = writers.union(set(w.file_types))
     ft, w = ', '.join(sorted(filetypes())), ', '.join(sorted(writers))
-    return config().option_parser(USAGE%dict(read=ft, write=w))
+    return config().option_parser(USAGE.format(ft, w))
 
 def do_set_metadata(opts, mi, stream, stream_type):
     mi = MetaInformation(mi)
@@ -165,7 +165,6 @@ def main(args=sys.argv):
         prints(_('No file specified'), file=sys.stderr)
         return 1
     path = args[1]
-    stream = open(path, 'r+b')
     stream_type = os.path.splitext(path)[1].replace('.', '').lower()
 
     trying_to_set = False
@@ -175,7 +174,8 @@ def main(args=sys.argv):
         if getattr(opts, pref.name) is not None:
             trying_to_set = True
             break
-    mi = get_metadata(stream, stream_type, force_read_metadata=True)
+    with open(path, 'rb') as stream:
+        mi = get_metadata(stream, stream_type, force_read_metadata=True)
     if trying_to_set:
         prints(_('Original metadata')+'::')
     metadata = unicode(mi)
@@ -184,16 +184,16 @@ def main(args=sys.argv):
     prints(metadata, safe_encode=True)
 
     if trying_to_set:
-        stream.seek(0)
-        do_set_metadata(opts, mi, stream, stream_type)
-        stream.seek(0)
-        stream.flush()
-        lrf = None
-        if stream_type == 'lrf':
-            if opts.lrf_bookid is not None:
-                lrf = LRFMetaFile(stream)
-                lrf.book_id = opts.lrf_bookid
-        mi = get_metadata(stream, stream_type, force_read_metadata=True)
+        with open(path, 'r+b') as stream:
+            do_set_metadata(opts, mi, stream, stream_type)
+            stream.seek(0)
+            stream.flush()
+            lrf = None
+            if stream_type == 'lrf':
+                if opts.lrf_bookid is not None:
+                    lrf = LRFMetaFile(stream)
+                    lrf.book_id = opts.lrf_bookid
+            mi = get_metadata(stream, stream_type, force_read_metadata=True)
         prints('\n' + _('Changed metadata') + '::')
         metadata = unicode(mi)
         metadata = '\t'+'\n\t'.join(metadata.split('\n'))

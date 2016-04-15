@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -53,6 +53,18 @@ authors = re(authors, ' &amp; ', '<br>');
 re(authors, '&amp;&amp;', '&amp;')
 '''
 Prefs = namedtuple('Prefs', ' '.join(sorted(cprefs.defaults)))
+
+_use_roman = None
+def get_use_roman():
+    global _use_roman
+    if _use_roman is None:
+        return config['use_roman_numerals_for_series_number']
+    return _use_roman
+
+def set_use_roman(val):
+    global _use_roman
+    _use_roman = bool(val)
+
 # }}}
 
 # Draw text {{{
@@ -174,28 +186,34 @@ class Block(object):
             if hasattr(l, 'draw'):
                 # Etch effect for the text
                 painter.save()
+                painter.setRenderHints(QPainter.TextAntialiasing | QPainter.Antialiasing)
+                painter.save()
                 painter.setPen(QColor(255, 255, 255, 125))
                 l.draw(painter, QPointF(1, 1))
                 painter.restore()
                 l.draw(painter, QPointF())
+                painter.restore()
 
 def layout_text(prefs, img, title, subtitle, footer, max_height, style):
     width = img.width() - 2 * style.hmargin
     title, subtitle, footer = title, subtitle, footer
     title_font = QFont(prefs.title_font_family or 'Liberation Serif')
     title_font.setPixelSize(prefs.title_font_size)
+    title_font.setStyleStrategy(QFont.PreferAntialias)
     title_block = Block(title, width, title_font, img, max_height, style.TITLE_ALIGN)
     title_block.position = style.hmargin, style.vmargin
     subtitle_block = Block()
     if subtitle:
         subtitle_font = QFont(prefs.subtitle_font_family or 'Liberation Sans')
         subtitle_font.setPixelSize(prefs.subtitle_font_size)
+        subtitle_font.setStyleStrategy(QFont.PreferAntialias)
         gap = 2 * title_block.leading
         mh = max_height - title_block.height - gap
         subtitle_block = Block(subtitle, width, subtitle_font, img, mh, style.SUBTITLE_ALIGN)
         subtitle_block.position = style.hmargin, title_block.position.y + title_block.height + gap
 
     footer_font = QFont(prefs.footer_font_family or 'Liberation Serif')
+    footer_font.setStyleStrategy(QFont.PreferAntialias)
     footer_font.setPixelSize(prefs.footer_font_size)
     footer_block = Block(footer, width, footer_font, img, max_height, style.FOOTER_ALIGN)
     footer_block.position = style.hmargin, img.height() - style.vmargin - footer_block.height
@@ -255,7 +273,7 @@ def preserve_fields(obj, fields):
 def format_text(mi, prefs):
     with preserve_fields(mi, 'authors formatted_series_index'):
         mi.authors = [a for a in mi.authors if a != _('Unknown')]
-        mi.formatted_series_index = fmt_sidx(mi.series_index or 0, use_roman=config['use_roman_numerals_for_series_number'])
+        mi.formatted_series_index = fmt_sidx(mi.series_index or 0, use_roman=get_use_roman())
         return tuple(format_fields(mi, prefs))
 # }}}
 
@@ -371,7 +389,7 @@ class Banner(Style):
 
     def __call__(self, painter, rect, color_theme, title_block, subtitle_block, footer_block):
         painter.fillRect(rect, self.color1)
-        top = title_block.position.y + 10
+        top = title_block.position.y + 2
         extra_spacing = subtitle_block.line_spacing // 2 if subtitle_block.line_spacing else title_block.line_spacing // 3
         height = title_block.height + subtitle_block.height + extra_spacing + title_block.leading
         right = rect.right() - self.hmargin
@@ -570,7 +588,9 @@ def generate_masthead(title, output_path=None, width=600, height=60, as_qimage=F
     img = QImage(width, height, QImage.Format_ARGB32)
     img.fill(Qt.white)
     p = QPainter(img)
+    p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
     f = QFont(font_family)
+    f.setStyleStrategy(QFont.PreferAntialias)
     f.setPixelSize((height * 3) // 4), f.setBold(True)
     p.setFont(f)
     p.drawText(img.rect(), Qt.AlignLeft | Qt.AlignVCenter, sanitize(title))
@@ -586,7 +606,7 @@ def generate_masthead(title, output_path=None, width=600, height=60, as_qimage=F
 def test(scale=0.25):
     from PyQt5.Qt import QLabel, QApplication, QPixmap, QMainWindow, QWidget, QScrollArea, QGridLayout
     app = QApplication([])
-    mi = Metadata('xxx', ['Kovid Goyal', 'John & Doe', 'Author'])
+    mi = Metadata('Unknown', ['Kovid Goyal', 'John & Doe', 'Author'])
     mi.series = 'A series of styles'
     m = QMainWindow()
     sa = QScrollArea(m)

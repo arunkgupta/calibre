@@ -6,6 +6,7 @@ from datetime import date
 
 from PyQt5.Qt import QDialog, QDialogButtonBox
 
+from calibre import strftime
 from calibre.gui2.dialogs.search_ui import Ui_Dialog
 from calibre.library.caches import CONTAINS_MATCH, EQUALS_MATCH
 from calibre.gui2 import gprefs
@@ -36,7 +37,7 @@ class SearchDialog(QDialog, Ui_Dialog):
         QDialog.__init__(self, parent)
         self.setupUi(self)
         self.um_label.setText(self.um_label.text() % localize_user_manual_link('http://manual.calibre-ebook.com/gui.html#the-search-interface'))
-        for val, text in [(0, '')] + [(i, date(2010, i, 1).strftime('%B')) for i in xrange(1, 13)]:
+        for val, text in [(0, '')] + [(i, strftime('%B', date(2010, i, 1).timetuple())) for i in xrange(1, 13)]:
             self.date_month.addItem(text, val)
         for val, text in [('today', _('Today')), ('yesterday', _('Yesterday')), ('thismonth', _('This month'))]:
             self.date_human.addItem(text, val)
@@ -50,6 +51,7 @@ class SearchDialog(QDialog, Ui_Dialog):
         self.date_month.currentIndexChanged.connect(lambda : self.sel_date.setChecked(True))
         self.date_day.valueChanged.connect(lambda : self.sel_date.setChecked(True))
         self.date_daysago.valueChanged.connect(lambda : self.sel_daysago.setChecked(True))
+        self.date_ago_type.addItems([_('days'), _('weeks'), _('months'), _('years')])
         self.date_human.currentIndexChanged.connect(lambda : self.sel_human.setChecked(True))
         init_dateop(self.dateop_date)
         self.sel_date.setChecked(True)
@@ -143,7 +145,9 @@ class SearchDialog(QDialog, Ui_Dialog):
                     ans += '-%s' % d
             return ans
         if self.sel_daysago.isChecked():
-            return '%s%sdaysago' % (prefix, self.date_daysago.value())
+            val = self.date_daysago.value()
+            val *= {0:1, 1:7, 2:30, 3:365}[self.date_ago_type.currentIndex()]
+            return '%s%sdaysago' % (prefix, val)
         return '%s%s' % (prefix, unicode(self.date_human.itemData(self.date_human.currentIndex()) or ''))
 
     def adv_search_string(self):

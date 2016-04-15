@@ -23,7 +23,7 @@ class PDFInput(InputFormatPlugin):
             'be unwrapped. Valid values are a decimal between 0 and 1. The '
             'default is 0.45, just below the median line length.')),
         OptionRecommendation(name='new_pdf_engine', recommended_value=False,
-            help=_('Use the new PDF conversion engine.'))
+            help=_('Use the new PDF conversion engine. Currently not operational.'))
     ])
 
     def convert_new(self, stream, accelerators):
@@ -67,5 +67,12 @@ class PDFInput(InputFormatPlugin):
         log.debug('Rendering manifest...')
         with open(u'metadata.opf', 'wb') as opffile:
             opf.render(opffile)
+        if os.path.exists(u'toc.ncx'):
+            ncxid = opf.manifest.id_for_path('toc.ncx')
+            if ncxid:
+                with open(u'metadata.opf', 'r+b') as f:
+                    raw = f.read().replace(b'<spine', b'<spine toc="%s"' % bytes(ncxid))
+                    f.seek(0)
+                    f.write(raw)
 
         return os.path.join(os.getcwdu(), u'metadata.opf')

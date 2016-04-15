@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement
 
@@ -51,9 +51,9 @@ class EPUBOutput(OutputFormatPlugin):
 
     options = set([
         OptionRecommendation(name='extract_to',
-            help=_('Extract the contents of the generated EPUB file to the '
+            help=_('Extract the contents of the generated %s file to the '
                 'specified directory. The contents of the directory are first '
-                'deleted, so be careful.')),
+                'deleted, so be careful.') % 'EPUB'),
 
         OptionRecommendation(name='dont_split_on_page_breaks',
             recommended_value=False, level=OptionRecommendation.LOW,
@@ -71,7 +71,7 @@ class EPUBOutput(OutputFormatPlugin):
             help=_('Split all HTML files larger than this size (in KB). '
                 'This is necessary as most EPUB readers cannot handle large '
                 'file sizes. The default of %defaultKB is the size required '
-                'for Adobe Digital Editions.')
+                'for Adobe Digital Editions. Set to 0 to disable size based splitting.')
         ),
 
         OptionRecommendation(name='no_default_epub_cover', recommended_value=False,
@@ -355,7 +355,7 @@ class EPUBOutput(OutputFormatPlugin):
                 frag = urlunquote(frag)
                 if frag and frag_pat.match(frag) is None:
                     self.log.warn(
-                            'Removing invalid fragment identifier %r from TOC'%frag)
+                            'Removing fragment identifier %r from TOC as Adobe Digital Editions cannot handle it'%frag)
                     node.href = base
 
         for x in self.oeb.spine:

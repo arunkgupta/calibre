@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -7,8 +7,9 @@ __docformat__ = 'restructuredtext en'
 
 import os, shutil, copy
 from functools import partial
+from io import BytesIO
 
-from PyQt5.Qt import QMenu, QModelIndex, QTimer, QIcon
+from PyQt5.Qt import QMenu, QModelIndex, QTimer, QIcon, QApplication
 
 from calibre.gui2 import error_dialog, Dispatcher, question_dialog, gprefs
 from calibre.gui2.dialogs.metadata_bulk import MetadataBulkDialog
@@ -173,6 +174,7 @@ class EditMetadataAction(InterfaceAction):
         good_ids, tdir, log_file, lm_map, failed_ids = payload
         if not good_ids:
             return
+        restrict_to_failed = False
 
         modified = set()
         db = self.gui.current_db
@@ -244,6 +246,9 @@ class EditMetadataAction(InterfaceAction):
                 db=db
             )
             if d.exec_() == d.Accepted:
+                if d.mark_rejected:
+                    failed_ids |= d.rejected_ids
+                    restrict_to_failed = True
                 nid_map = {}
                 for book_id, (changed, mi) in d.accepted.iteritems():
                     if mi is None:  # discarded
@@ -263,7 +268,8 @@ class EditMetadataAction(InterfaceAction):
             else:
                 id_map = {}
 
-        restrict_to_failed = bool(args and args[0])
+        restrict_to_failed = restrict_to_failed or bool(args and args[0])
+        restrict_to_failed = restrict_to_failed and bool(failed_ids)
         if restrict_to_failed:
             db.data.set_marked_ids(failed_ids)
 
@@ -322,17 +328,20 @@ class EditMetadataAction(InterfaceAction):
             m.refresh_rows(rows_to_refresh)
 
         if changed:
-            m.refresh_ids(list(changed))
-            current = self.gui.library_view.currentIndex()
-            if self.gui.cover_flow:
-                self.gui.cover_flow.dataChanged()
-            m.current_changed(current, previous)
-            self.gui.tags_view.recount()
+            self.refresh_books_after_metadata_edit(changed, previous)
         if self.gui.library_view.alternate_views.current_view is view:
             if hasattr(view, 'restore_hpos'):
                 view.restore_hpos(hpos)
             else:
                 view.horizontalScrollBar().setValue(hpos)
+
+    def refresh_books_after_metadata_edit(self, book_ids, previous=None):
+        m = self.gui.library_view.model()
+        m.refresh_ids(list(book_ids))
+        current = self.gui.library_view.currentIndex()
+        self.gui.refresh_cover_browser()
+        m.current_changed(current, previous or current)
+        self.gui.tags_view.recount()
 
     def do_edit_metadata(self, row_list, current_row, editing_multiple):
         from calibre.gui2.metadata.single import edit_metadata
@@ -397,8 +406,7 @@ class EditMetadataAction(InterfaceAction):
             else:
                 m.refresh_ids(refresh_books)
             self.gui.tags_view.recount()
-            if self.gui.cover_flow:
-                self.gui.cover_flow.dataChanged()
+            self.gui.refresh_cover_browser()
             self.gui.library_view.select_rows(book_ids)
 
     # Merge books {{{
@@ -406,6 +414,7 @@ class EditMetadataAction(InterfaceAction):
         '''
         Merge selected books in library.
         '''
+        from calibre.gui2.dialogs.confirm_merge import confirm_merge
         if self.gui.stack.currentIndex() != 0:
             return
         rows = self.gui.library_view.selectionModel().selectedRows()
@@ -418,50 +427,51 @@ class EditMetadataAction(InterfaceAction):
                         show=True)
         if len(rows) > 5:
             if not confirm('<p>'+_('You are about to merge more than 5 books.  '
-                                    'Are you <b>sure</b> you want to proceed?')
-                                +'</p>', 'merge_too_many_books', self.gui):
+                                    'Are you <b>sure</b> you want to proceed?') +
+                           '</p>', 'merge_too_many_books', self.gui):
                 return
 
         dest_id, src_ids = self.books_to_merge(rows)
-        title = self.gui.library_view.model().db.title(dest_id, index_is_id=True)
+        mi = self.gui.current_db.new_api.get_proxy_metadata(dest_id)
+        title = mi.title
         if safe_merge:
-            if not confirm('<p>'+_(
+            if not confirm_merge('<p>'+_(
                 'Book formats and metadata from the selected books '
                 'will be added to the <b>first selected book</b> (%s).<br> '
                 'The second and subsequently selected books will not '
                 'be deleted or changed.<br><br>'
-                'Please confirm you want to proceed.')%title
-            +'</p>', 'merge_books_safe', self.gui):
+                'Please confirm you want to proceed.')%title +
+                           '</p>', 'merge_books_safe', self.gui, mi):
                 return
             self.add_formats(dest_id, self.formats_for_books(rows))
             self.merge_metadata(dest_id, src_ids)
         elif merge_only_formats:
-            if not confirm('<p>'+_(
+            if not confirm_merge('<p>'+_(
                 'Book formats from the selected books will be merged '
                 'into the <b>first selected book</b> (%s). '
                 'Metadata in the first selected book will not be changed. '
                 'Author, Title and all other metadata will <i>not</i> be merged.<br><br>'
-                'After merger the second and subsequently '
+                'After being merged, the second and subsequently '
                 'selected books, with any metadata they have will be <b>deleted</b>. <br><br>'
                 'All book formats of the first selected book will be kept '
                 'and any duplicate formats in the second and subsequently selected books '
                 'will be permanently <b>deleted</b> from your calibre library.<br><br>  '
-                'Are you <b>sure</b> you want to proceed?')%title
-            +'</p>', 'merge_only_formats', self.gui):
+                'Are you <b>sure</b> you want to proceed?')%title +
+                           '</p>', 'merge_only_formats', self.gui, mi):
                 return
             self.add_formats(dest_id, self.formats_for_books(rows))
             self.delete_books_after_merge(src_ids)
         else:
-            if not confirm('<p>'+_(
+            if not confirm_merge('<p>'+_(
                 'Book formats and metadata from the selected books will be merged '
                 'into the <b>first selected book</b> (%s).<br><br>'
-                'After merger the second and '
+                'After being merged, the second and '
                 'subsequently selected books will be <b>deleted</b>. <br><br>'
                 'All book formats of the first selected book will be kept '
                 'and any duplicate formats in the second and subsequently selected books '
                 'will be permanently <b>deleted</b> from your calibre library.<br><br>  '
-                'Are you <b>sure</b> you want to proceed?')%title
-            +'</p>', 'merge_books', self.gui):
+                'Are you <b>sure</b> you want to proceed?')%title +
+                           '</p>', 'merge_books', self.gui, mi):
                 return
             self.add_formats(dest_id, self.formats_for_books(rows))
             self.merge_metadata(dest_id, src_ids)
@@ -471,16 +481,15 @@ class EditMetadataAction(InterfaceAction):
             for row in rows:
                 if row.row() < rows[0].row():
                     dest_row -= 1
-            ci = self.gui.library_view.model().index(dest_row, 0)
-            if ci.isValid():
-                self.gui.library_view.setCurrentIndex(ci)
-                self.gui.library_view.model().current_changed(ci, ci)
+            self.gui.library_view.set_current_row(dest_row)
+        cr = self.gui.library_view.currentIndex().row()
+        self.gui.library_view.model().refresh_ids((dest_id,), cr)
 
     def add_formats(self, dest_id, src_books, replace=False):
         for src_book in src_books:
             if src_book:
                 fmt = os.path.splitext(src_book)[-1].replace('.', '').upper()
-                with open(src_book, 'rb') as f:
+                with lopen(src_book, 'rb') as f:
                     self.gui.library_view.model().db.add_format(dest_id, fmt, f, index_is_id=True,
                             notify=False, replace=replace)
 
@@ -736,6 +745,7 @@ class EditMetadataAction(InterfaceAction):
                 _('Failed to apply updated metadata for some books'
                     ' in your library. Click "Show Details" to see '
                     'details.'), det_msg='\n\n'.join(msg), show=True)
+        changed_books = len(self.applied_ids or ())
         self.refresh_gui(self.applied_ids)
 
         self.apply_id_map = []
@@ -745,16 +755,86 @@ class EditMetadataAction(InterfaceAction):
                 self.apply_callback(list(self.applied_ids))
         finally:
             self.apply_callback = None
+        if changed_books:
+            QApplication.alert(self.gui, 2000)
 
     def refresh_gui(self, book_ids, covers_changed=True, tag_browser_changed=True):
         if book_ids:
             cr = self.gui.library_view.currentIndex().row()
             self.gui.library_view.model().refresh_ids(
                 list(book_ids), cr)
-            if covers_changed and self.gui.cover_flow:
-                self.gui.cover_flow.dataChanged()
+            if covers_changed:
+                self.gui.refresh_cover_browser()
             if tag_browser_changed:
                 self.gui.tags_view.recount()
 
     # }}}
 
+    def remove_metadata_item(self, book_id, field, value):
+        db = self.gui.current_db.new_api
+        fm = db.field_metadata[field]
+        affected_books = set()
+        if field == 'identifiers':
+            identifiers = db.field_for(field, book_id)
+            if identifiers.pop(value, False) is not False:
+                affected_books = db.set_field(field, {book_id:identifiers})
+        elif fm['is_multiple']:
+            item_id = db.get_item_id(field, value)
+            if item_id is not None:
+                affected_books = db.remove_items(field, (item_id,), {book_id})
+        else:
+            affected_books = db.set_field(field, {book_id:''})
+        if affected_books:
+            self.refresh_books_after_metadata_edit(affected_books)
+
+    def set_cover_from_format(self, book_id, fmt):
+        from calibre.utils.config import prefs
+        from calibre.ebooks.metadata.meta import get_metadata
+        fmt = fmt.lower()
+        cdata = None
+        db = self.gui.current_db.new_api
+        if fmt == 'pdf':
+            pdfpath = db.format_abspath(book_id, fmt)
+            if pdfpath is None:
+                return error_dialog(self.gui, _('Format file missing'), _(
+                    'Cannot read cover as the %s file is missing from this book') % 'PDF', show=True)
+            from calibre.gui2.metadata.pdf_covers import PDFCovers
+            d = PDFCovers(pdfpath, parent=self.gui)
+            if d.exec_() == d.Accepted:
+                cpath = d.cover_path
+                if cpath:
+                    with open(cpath, 'rb') as f:
+                        cdata = f.read()
+            d.cleanup()
+        else:
+            stream = BytesIO()
+            try:
+                db.copy_format_to(book_id, fmt, stream)
+            except NoSuchFormat:
+                return error_dialog(self.gui, _('Format file missing'), _(
+                    'Cannot read cover as the %s file is missing from this book') % fmt.upper(), show=True)
+            old = prefs['read_file_metadata']
+            if not old:
+                prefs['read_file_metadata'] = True
+            try:
+                stream.seek(0)
+                mi = get_metadata(stream, fmt)
+            except Exception:
+                import traceback
+                return error_dialog(self.gui, _('Could not read metadata'),
+                            _('Could not read metadata from %s format')%fmt.upper(),
+                             det_msg=traceback.format_exc(), show=True)
+            finally:
+                if old != prefs['read_file_metadata']:
+                    prefs['read_file_metadata'] = old
+            if mi.cover and os.access(mi.cover, os.R_OK):
+                cdata = open(mi.cover).read()
+            elif mi.cover_data[1] is not None:
+                cdata = mi.cover_data[1]
+            if cdata is None:
+                return error_dialog(self.gui, _('Could not read cover'),
+                            _('Could not read cover from %s format')%fmt.upper(), show=True)
+        db.set_cover({book_id:cdata})
+        current_idx = self.gui.library_view.currentIndex()
+        self.gui.library_view.model().current_changed(current_idx, current_idx)
+        self.gui.refresh_cover_browser()

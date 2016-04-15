@@ -8,10 +8,11 @@ __builtin__.__dict__['dynamic_property'] = lambda func: func(None)
 from math import floor
 from functools import partial
 
-warnings.simplefilter('ignore', DeprecationWarning)
+if 'CALIBRE_SHOW_DEPRECATION_WARNINGS' not in os.environ:
+    warnings.simplefilter('ignore', DeprecationWarning)
 try:
     os.getcwdu()
-except:
+except EnvironmentError:
     os.chdir(os.path.expanduser('~'))
 
 from calibre.constants import (iswindows, isosx, islinux, isfrozen,
@@ -19,15 +20,7 @@ from calibre.constants import (iswindows, isosx, islinux, isfrozen,
         win32event, win32api, winerror, fcntl,
         filesystem_encoding, plugins, config_dir)
 from calibre.startup import winutil, winutilerror
-
-if False and islinux and not getattr(sys, 'frozen', False):
-    # Imported before PyQt to workaround PyQt util-linux conflict discovered on gentoo
-    # See http://bugs.gentoo.org/show_bug.cgi?id=317557
-    # Importing uuid is slow so get rid of this at some point, maybe in a few
-    # years when even Debian has caught up
-    # Also remember to remove it from site.py in the binary builds
-    import uuid
-    uuid.uuid4()
+from calibre.utils.icu import safe_chr
 
 if False:
     # Prevent pyflakes from complaining
@@ -83,8 +76,8 @@ def patheq(p1, p2):
     return d(p1) == d(p2)
 
 def unicode_path(path, abs=False):
-    if not isinstance(path, unicode):
-        path = path.decode(sys.getfilesystemencoding())
+    if isinstance(path, bytes):
+        path = path.decode(filesystem_encoding)
     if abs:
         path = os.path.abspath(path)
     return path
@@ -173,14 +166,15 @@ def prints(*args, **kwargs):
     Has the same signature as the print function from Python 3, except for the
     additional keyword argument safe_encode, which if set to True will cause the
     function to use repr when encoding fails.
+
+    Returns the number of bytes written.
     '''
     file = kwargs.get('file', sys.stdout)
-    sep  = kwargs.get('sep', ' ')
-    end  = kwargs.get('end', '\n')
-    enc = preferred_encoding
+    sep  = bytes(kwargs.get('sep', ' '))
+    end  = bytes(kwargs.get('end', '\n'))
+    enc = 'utf-8' if 'CALIBRE_WORKER' in os.environ else preferred_encoding
     safe_encode = kwargs.get('safe_encode', False)
-    if 'CALIBRE_WORKER' in os.environ:
-        enc = 'utf-8'
+    count = 0
     for i, arg in enumerate(args):
         if isinstance(arg, unicode):
             if iswindows:
@@ -188,8 +182,10 @@ def prints(*args, **kwargs):
                 cs = Detect(file)
                 if cs.is_console:
                     cs.write_unicode_text(arg)
+                    count += len(arg)
                     if i != len(args)-1:
-                        file.write(bytes(sep))
+                        file.write(sep)
+                        count += len(sep)
                     continue
             try:
                 arg = arg.encode(enc)
@@ -218,12 +214,18 @@ def prints(*args, **kwargs):
 
         try:
             file.write(arg)
+            count += len(arg)
         except:
             import repr as reprlib
-            file.write(reprlib.repr(arg))
+            arg = reprlib.repr(arg)
+            file.write(arg)
+            count += len(arg)
         if i != len(args)-1:
-            file.write(bytes(sep))
-    file.write(bytes(end))
+            file.write(sep)
+            count += len(sep)
+    file.write(end)
+    count += len(sep)
+    return count
 
 class CommandLineError(Exception):
     pass
@@ -384,20 +386,21 @@ def random_user_agent(choose=None):
         choose = random.randint(0, len(choices)-1)
     return choices[choose]
 
-def browser(honor_time=True, max_time=2, mobile_browser=False, user_agent=None, use_robust_parser=False):
+def browser(honor_time=True, max_time=2, mobile_browser=False, user_agent=None, use_robust_parser=False, verify_ssl_certificates=True):
     '''
     Create a mechanize browser for web scraping. The browser handles cookies,
     refresh requests and ignores robots.txt. Also uses proxy if available.
 
     :param honor_time: If True honors pause time in refresh requests
     :param max_time: Maximum time in seconds to wait during a refresh request
+    :param verify_ssl_certificates: If false SSL certificates errors are ignored
     '''
     from calibre.utils.browser import Browser
     if use_robust_parser:
         import mechanize
-        opener = Browser(factory=mechanize.RobustFactory())
+        opener = Browser(factory=mechanize.RobustFactory(), verify_ssl=verify_ssl_certificates)
     else:
-        opener = Browser()
+        opener = Browser(verify_ssl=verify_ssl_certificates)
     opener.set_handle_refresh(True, max_time=max_time, honor_time=honor_time)
     opener.set_handle_robots(False)
     if user_agent is None:
@@ -533,7 +536,7 @@ def strftime(fmt, t=None):
 
 def my_unichr(num):
     try:
-        return unichr(num)
+        return safe_chr(num)
     except (ValueError, OverflowError):
         return u'?'
 

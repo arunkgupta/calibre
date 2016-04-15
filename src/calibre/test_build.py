@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -12,8 +12,12 @@ __docformat__ = 'restructuredtext en'
 Test a binary calibre build to ensure that all needed binary images/libraries have loaded.
 '''
 
-import cStringIO, os, ctypes
-from calibre.constants import plugins, iswindows, islinux
+import cStringIO, os, ctypes, sys
+from calibre.constants import plugins, iswindows, islinux, isosx
+
+def fprint(*args, **kwargs):
+    print(*args, **kwargs)
+    sys.stdout.flush()
 
 def test_dlls():
     import win32api
@@ -25,11 +29,11 @@ def test_dlls():
                 ctypes.WinDLL(os.path.join(base, x))
             except Exception as err:
                 errors.append('Failed to load DLL %s with error: %s' % (x, err))
-                print (errors[-1])
+                fprint(errors[-1])
     if errors:
-        print ('Loading %d dll(s) failed!' % len(errors))
+        fprint('Loading %d dll(s) failed!' % len(errors))
         raise SystemExit(1)
-    print ('DLLs OK!')
+    fprint('DLLs OK!')
 
 
 def test_dbus():
@@ -41,18 +45,28 @@ def test_dbus():
     if not bus.list_names():
         raise ValueError('Failed to list names on the session bus')
     del bus
-    print ('dbus OK!')
+    fprint('dbus OK!')
 
 def test_regex():
     import regex
     if regex.findall(r'(?i)(a)(b)', 'ab cd AB 1a1b') != [('a', 'b'), ('A', 'B')]:
         raise ValueError('regex module failed on a simple search')
-    print ('regex OK!')
+    fprint('regex OK!')
+
+def test_lzma():
+    from lzma.xz import test_lzma2
+    test_lzma2()
+    fprint('lzma OK!')
 
 def test_html5lib():
     import html5lib.html5parser  # noqa
     from html5lib import parse  # noqa
-    print ('html5lib OK!')
+    fprint('html5lib OK!')
+
+def test_spell():
+    from calibre.spell.dictionary import test_dictionaries
+    test_dictionaries()
+    fprint('hunspell OK!')
 
 def test_plugins():
     bad = []
@@ -62,18 +76,29 @@ def test_plugins():
             bad.append((name, err))
     if bad:
         for name, err in bad:
-            print ('Failed to load plugin:', name, 'with error:\n', err, '\n')
+            fprint('Failed to load plugin:', name, 'with error:\n', err, '\n')
         raise SystemExit(1)
-    print ('Loaded all plugins successfully!')
+    fprint('Loaded all plugins successfully!')
 
 def test_lxml():
+    from calibre.utils.cleantext import test_clean_xml_chars
+    test_clean_xml_chars()
     from lxml import etree
     raw = '<a/>'
     root = etree.fromstring(raw)
     if etree.tostring(root) == raw:
-        print ('lxml OK!')
+        fprint('lxml OK!')
     else:
         raise RuntimeError('lxml failed')
+
+def test_certgen():
+    from calibre.utils.certgen import create_key_pair
+    create_key_pair()
+
+def test_fsevents():
+    from fsevents import Observer, Stream
+    del Observer, Stream
+    fprint('macfsevents OK!')
 
 def test_winutil():
     from calibre.devices.scanner import win_pnp_drives
@@ -82,11 +107,11 @@ def test_winutil():
     try:
         matches = win_pnp_drives.scanner()
     except winutil.DriveError:
-        print ('No removable drives found, skipping win_pnp_drives test!')
+        fprint('No removable drives found, skipping win_pnp_drives test!')
         return
     if len(matches) < 1:
         raise RuntimeError('win_pnp_drives returned no drives')
-    print ('win_pnp_drives OK!')
+    fprint('win_pnp_drives OK!')
 
 def test_sqlite():
     import sqlite3
@@ -94,13 +119,13 @@ def test_sqlite():
     from calibre.library.sqlite import load_c_extensions
     if not load_c_extensions(conn, True):
         raise RuntimeError('Failed to load sqlite extension')
-    print ('sqlite OK!')
+    fprint('sqlite OK!')
 
 def test_apsw():
     import apsw
     conn = apsw.Connection(':memory:')
     conn.close()
-    print ('apsw OK!')
+    fprint('apsw OK!')
 
 def test_qt():
     from calibre.gui2 import Application
@@ -111,7 +136,7 @@ def test_qt():
     if len(QFontDatabase().families()) < 5:
         raise RuntimeError('The QPA headless plugin is not able to locate enough system fonts via fontconfig')
     fmts = set(map(unicode, QImageReader.supportedImageFormats()))
-    testf = set(['jpg', 'png', 'mng', 'svg', 'ico', 'gif'])
+    testf = set(['jpg', 'png', 'svg', 'ico', 'gif'])
     if testf.intersection(fmts) != testf:
         raise RuntimeError(
             "Qt doesn't seem to be able to load its image plugins")
@@ -122,13 +147,13 @@ def test_qt():
         raise RuntimeError('Qt not compiled with openssl')
     del na
     del app
-    print ('Qt OK!')
+    fprint('Qt OK!')
 
 def test_imaging():
     from calibre.ebooks import calibre_cover
     data = calibre_cover('test', 'ok')
     if len(data) > 1000:
-        print ('ImageMagick OK!')
+        fprint('ImageMagick OK!')
     else:
         raise RuntimeError('ImageMagick choked!')
     from PIL import Image
@@ -141,38 +166,34 @@ def test_imaging():
     i = Image.open(cStringIO.StringIO(data))
     if i.size < (20, 20):
         raise RuntimeError('PIL choked!')
-    print ('PIL OK!')
+    fprint('PIL OK!')
 
 def test_unrar():
     from calibre.utils.unrar import test_basic
     test_basic()
-    print ('Unrar OK!')
-
-def test_ssl():
-    import ssl
-    ssl
-    print ('SSL OK!')
+    fprint('Unrar OK!')
 
 def test_icu():
-    print ('Testing ICU')
+    fprint('Testing ICU')
     from calibre.utils.icu_test import test_build
     test_build()
-    print ('ICU OK!')
+    fprint('ICU OK!')
+
+def test_dukpy():
+    fprint('Testing dukpy')
+    from duktape import test_build
+    test_build()
+    fprint('dukpy OK!')
 
 def test_wpd():
     wpd = plugins['wpd'][0]
     try:
         wpd.init('calibre', 1, 1, 1)
     except wpd.NoWPD:
-        print ('This computer does not have WPD')
+        fprint('This computer does not have WPD')
     else:
         wpd.uninit()
-    print ('WPD OK!')
-
-def test_woff():
-    from calibre.utils.fonts.woff import test
-    test()
-    print ('WOFF ok!')
+    fprint('WPD OK!')
 
 def test_magick():
     from calibre.utils.magick import create_canvas
@@ -180,51 +201,95 @@ def test_magick():
     from calibre.gui2.tweak_book.editor.canvas import qimage_to_magick, magick_to_qimage
     img = magick_to_qimage(i)
     i = qimage_to_magick(img)
-    print ('magick OK!')
+    fprint('magick OK!')
 
 def test_tokenizer():
-    print ('Testing tinycss tokenizer')
+    fprint('Testing tinycss tokenizer')
     from tinycss.tokenizer import c_tokenize_flat
     if c_tokenize_flat is None:
         raise ValueError('tinycss C tokenizer not loaded')
-    from tinycss.tests.main import run_tests
-    run_tests(for_build=True)
-    print('tinycss tokenizer OK!')
+    import tinycss.tests.main as m
+    if getattr(m, '__file__', None) and os.path.exists(m.__file__):
+        m.run_tests(for_build=True)
+    fprint('tinycss tokenizer OK!')
+
+def test_executables():
+    from calibre.utils.ipc.launch import Worker
+    if getattr(sys, 'frozen', False):
+        w = Worker({})
+        if not os.path.exists(w.executable):
+            raise SystemExit('calibre-parallel (%s) does not exist' % w.executable)
+        if not os.path.exists(w.gui_executable):
+            raise SystemExit('calibre-parallel-gui (%s) does not exist' % w.gui_executable)
+        if iswindows:
+            from calibre.devices.usbms.device import eject_exe
+            if not os.path.exists(eject_exe()):
+                raise SystemExit('calibre-eject.exe (%s) does not exist' % eject_exe())
+        from calibre.ebooks.pdf.pdftohtml import PDFTOHTML
+        if not os.path.exists(PDFTOHTML):
+            raise SystemExit('pdftohtml (%s) does not exist' % PDFTOHTML)
+
+        fprint('executables OK!')
 
 def test_netifaces():
     import netifaces
     if len(netifaces.interfaces()) < 1:
         raise ValueError('netifaces could find no network interfaces')
-    print ('netifaces OK!')
+    fprint('netifaces OK!')
 
 def test_psutil():
     import psutil
     psutil.Process(os.getpid())
-    print ('psutil OK!')
+    fprint('psutil OK!')
 
 def test_podofo():
     from calibre.utils.podofo import test_podofo as dotest
     dotest()
-    print ('podofo OK!')
+    fprint('podofo OK!')
 
 def test_terminal():
-    import readline, curses
-    curses.setupterm()
+    import readline
     del readline
-    print ('readline and curses OK!')
+    fprint('readline OK!')
+
+def test_markdown():
+    from calibre.ebooks.markdown import Markdown
+    Markdown(extensions=['extra'])
+    from calibre.library.comments import sanitize_html
+    sanitize_html(b'''<script>moo</script>xxx<img src="http://moo.com/x.jpg">''')
+    fprint('Markdown OK!')
+
+def test_image_compression():
+    from calibre.utils.img import test
+    test()
+    fprint('Image compression OK!')
+
+def test_openssl():
+    import ssl
+    ssl.PROTOCOL_TLSv1_2
+    if isosx:
+        cafile = ssl.get_default_verify_paths().cafile
+        if not cafile or not cafile.endswith('/mozilla-ca-certs.pem') or not os.access(cafile, os.R_OK):
+            raise ValueError('Mozilla CA certs not loaded')
+    fprint('SSL OK!')
 
 def test():
     if iswindows:
         test_dlls()
     test_plugins()
+    test_executables()
+    test_image_compression()
+    test_lzma()
+    test_dukpy()
+    test_spell()
     test_lxml()
-    test_ssl()
+    test_openssl()
     test_sqlite()
     test_apsw()
     test_imaging()
     test_unrar()
+    test_certgen()
     test_icu()
-    test_woff()
     test_qt()
     test_html5lib()
     test_regex()
@@ -233,14 +298,16 @@ def test():
     test_netifaces()
     test_psutil()
     test_podofo()
+    test_markdown()
+    if islinux:
+        test_dbus()
     if iswindows:
         test_wpd()
         test_winutil()
     else:
         test_terminal()
-    if islinux:
-        test_dbus()
+    if isosx:
+        test_fsevents()
 
 if __name__ == '__main__':
     test()
-

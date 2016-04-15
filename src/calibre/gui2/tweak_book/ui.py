@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -14,7 +14,7 @@ from future_builtins import map
 from PyQt5.Qt import (
     QDockWidget, Qt, QLabel, QIcon, QAction, QApplication, QWidget, QEvent,
     QVBoxLayout, QStackedWidget, QTabWidget, QImage, QPixmap, pyqtSignal,
-    QMenu, QHBoxLayout, QTimer, QUrl)
+    QMenu, QHBoxLayout, QTimer, QUrl, QSize)
 
 from calibre import prints
 from calibre.constants import __appname__, get_version, isosx, DEBUG
@@ -22,7 +22,7 @@ from calibre.gui2 import elided_text, open_url
 from calibre.gui2.dbus_export.widgets import factory
 from calibre.gui2.keyboard import Manager as KeyboardManager
 from calibre.gui2.main_window import MainWindow
-from calibre.gui2.throbber import ThrobbingButton, create_donate_widget
+from calibre.gui2.throbber import ThrobbingButton
 from calibre.gui2.tweak_book import (
     current_container, tprefs, actions, capitalize, toolbar_actions, editors, update_mark_text_action)
 from calibre.gui2.tweak_book.file_list import FileListWidget
@@ -33,11 +33,13 @@ from calibre.gui2.tweak_book.preview import Preview
 from calibre.gui2.tweak_book.plugin import create_plugin_actions
 from calibre.gui2.tweak_book.search import SearchPanel
 from calibre.gui2.tweak_book.check import Check
+from calibre.gui2.tweak_book.check_links import CheckExternalLinks
 from calibre.gui2.tweak_book.spell import SpellCheck
 from calibre.gui2.tweak_book.search import SavedSearches
 from calibre.gui2.tweak_book.toc import TOCViewer
 from calibre.gui2.tweak_book.char_select import CharSelect
 from calibre.gui2.tweak_book.live_css import LiveCSS
+from calibre.gui2.tweak_book.reports import Reports
 from calibre.gui2.tweak_book.manage_fonts import ManageFonts
 from calibre.gui2.tweak_book.function_replace import DebugOutput
 from calibre.gui2.tweak_book.editor.widget import register_text_editor_actions
@@ -97,6 +99,16 @@ class Central(QStackedWidget):  # {{{
         index = self.editor_tabs.addTab(editor, fname)
         self.editor_tabs.setTabToolTip(index, _('Full path:') + ' ' + name)
         editor.modification_state_changed.connect(self.editor_modified)
+
+    @property
+    def tab_order(self):
+        ans = []
+        rmap = {v:k for k, v in editors.iteritems()}
+        for i in xrange(self.editor_tabs.count()):
+            name = rmap.get(self.editor_tabs.widget(i))
+            if name is not None:
+                ans.append(name)
+        return ans
 
     def rename_editor(self, editor, name):
         for i in xrange(self.editor_tabs.count()):
@@ -221,8 +233,8 @@ class Main(MainWindow):
 
     def __init__(self, opts, notify=None):
         MainWindow.__init__(self, opts, disable_automatic_gc=True)
-        self.boss = Boss(self, notify=notify)
         self.setWindowTitle(self.APP_NAME)
+        self.boss = Boss(self, notify=notify)
         self.setWindowIcon(QIcon(I('tweak.png')))
         self.opts = opts
         self.path_to_ebook = None
@@ -238,6 +250,8 @@ class Main(MainWindow):
         self.toc_view = TOCViewer(self)
         self.saved_searches = SavedSearches(self)
         self.image_browser = InsertImage(self, for_browsing=True)
+        self.reports = Reports(self)
+        self.check_external_links = CheckExternalLinks(self)
         self.insert_char = CharSelect(self)
         self.manage_fonts = ManageFonts(self)
         self.sr_debug_output = DebugOutput(self)
@@ -275,6 +289,8 @@ class Main(MainWindow):
             self.setCorner(getattr(Qt, '%s%sCorner' % tuple(map(capitalize, (v, h)))), area)
         self.preview.apply_settings()
         self.live_css.apply_theme()
+        for bar in (self.global_bar, self.tools_bar, self.plugins_bar):
+            bar.setIconSize(QSize(tprefs['toolbar_icon_size'], tprefs['toolbar_icon_size']))
 
     def show_status_message(self, msg, timeout=5):
         self.status_bar.showMessage(msg, int(timeout*1000))
@@ -311,6 +327,8 @@ class Main(MainWindow):
                                    'new-file', (), _('Create a new file in the current book'))
         self.action_import_files = treg('document-import.png', _('&Import files into book'), self.boss.add_files, 'new-files', (), _('Import files into book'))
         self.action_open_book = treg('document_open.png', _('Open &book'), self.boss.open_book, 'open-book', 'Ctrl+O', _('Open a new book'))
+        self.action_open_book_folder = treg('mimetypes/dir.png', _('Open &folder (unzipped EPUB) as book'), partial(self.boss.open_book, open_folder=True),
+                                            'open-folder-as-book', (), _('Open a folder (unzipped EPUB) as a book'))
         # Qt does not generate shortcut overrides for cmd+arrow on os x which
         # means these shortcuts interfere with editing
         self.action_global_undo = treg('back.png', _('&Revert to before'), self.boss.do_global_undo, 'global-undo', () if isosx else 'Ctrl+Left',
@@ -368,6 +386,14 @@ class Main(MainWindow):
                                      _('Filter style information'))
         self.action_manage_fonts = treg('font.png', _('Manage &fonts'), self.boss.manage_fonts, 'manage-fonts', (), _('Manage fonts in the book'))
         self.action_add_cover = treg('default_cover.png', _('Add &cover'), self.boss.add_cover, 'add-cover', (), _('Add a cover to the book'))
+        self.action_reports = treg(
+            'reports.png', _('&Reports'), self.boss.show_reports, 'show-reports', ('Ctrl+Shift+R',), _('Show a report on various aspects of the book'))
+        self.action_check_external_links = treg('insert-link.png', _('Check &external links'), self.boss.check_external_links, 'check-external-links', (), _(
+            'Check external links in the book'))
+        self.action_compress_images = treg('compress-image.png', _('Compress &images losslessly'), self.boss.compress_images, 'compress-images', (), _(
+            'Compress images losslessly'))
+        self.action_transform_styles = treg('wizard.png', _('Transform &styles'), self.boss.transform_styles, 'transform-styles', (), _(
+            'Transform styles used in the book'))
 
         def ereg(icon, text, target, sid, keys, description):
             return reg(icon, text, partial(self.boss.editor_action, target), sid, keys, description)
@@ -449,7 +475,7 @@ class Main(MainWindow):
             'edit-clear.png', _('&Close other tabs'), self.central.close_all_but_current_editor, 'close-all-but-current-tab', 'Ctrl+Alt+W', _(
                 'Close all tabs except the current tab'))
         self.action_help = treg(
-            'help.png', _('User &Manual'), lambda : open_url(localize_user_manual_link(QUrl(
+            'help.png', _('User &Manual'), lambda : open_url(QUrl(localize_user_manual_link(
                 'http://manual.calibre-ebook.com/edit.html'))), 'user-manual', 'F1', _(
                 'Show User Manual'))
         self.action_browse_images = treg(
@@ -460,6 +486,9 @@ class Main(MainWindow):
                 'Split HTML file at multiple locations'))
         self.action_compare_book = treg('diff.png', _('&Compare to another book'), self.boss.compare_book, 'compare-book', (), _(
             'Compare to another book'))
+        self.action_manage_snippets = treg(
+            'snippets.png', _('Manage &Snippets'), self.boss.manage_snippets, 'manage-snippets', (), _(
+                'Manage user created snippets'))
 
         self.plugin_menu_actions = []
 
@@ -480,6 +509,7 @@ class Main(MainWindow):
         f.addAction(self.action_open_book)
         f.addAction(self.action_new_book)
         f.addAction(self.action_import_book)
+        f.addAction(self.action_open_book_folder)
         self.recent_books_menu = f.addMenu(_('&Recently opened books'))
         self.update_recent_books()
         f.addSeparator()
@@ -512,8 +542,10 @@ class Main(MainWindow):
         e.addAction(self.action_manage_fonts)
         e.addAction(self.action_embed_fonts)
         e.addAction(self.action_subset_fonts)
+        e.addAction(self.action_compress_images)
         e.addAction(self.action_smarten_punctuation)
         e.addAction(self.action_remove_unused_css)
+        e.addAction(self.action_transform_styles)
         e.addAction(self.action_fix_html_all)
         e.addAction(self.action_pretty_all)
         e.addAction(self.action_rationalize_folders)
@@ -521,7 +553,9 @@ class Main(MainWindow):
         e.addAction(self.action_set_semantics)
         e.addAction(self.action_filter_css)
         e.addAction(self.action_spell_check_book)
+        e.addAction(self.action_check_external_links)
         e.addAction(self.action_check_book)
+        e.addAction(self.action_reports)
 
         e = b.addMenu(_('&View'))
         t = e.addMenu(_('Tool&bars'))
@@ -586,6 +620,7 @@ class Main(MainWindow):
             b = self.addToolBar(text)
             b.setObjectName(name)  # Needed for saveState
             actions[name] = b.toggleViewAction()
+            b.setIconSize(QSize(tprefs['toolbar_icon_size'], tprefs['toolbar_icon_size']))
             return b
         self.global_bar = create(_('Book tool bar'), 'global')
         self.tools_bar = create(_('Tools tool bar'), 'tools')
@@ -601,15 +636,10 @@ class Main(MainWindow):
                 self.donate_button = b = ThrobbingButton(self)
                 b.clicked.connect(open_donate)
                 b.setAutoRaise(True)
-                self.donate_widget = w = create_donate_widget(b)
-                if hasattr(w, 'filler'):
-                    w.filler.setVisible(False)
-                b.set_normal_icon_size(self.global_bar.iconSize().width(), self.global_bar.iconSize().height())
-                b.setIcon(QIcon(I('donate.png')))
                 b.setToolTip(_('Donate to support calibre development'))
                 if animate:
                     QTimer.singleShot(10, b.start_animation)
-                bar.addWidget(w)
+                bar.addWidget(b)
             else:
                 try:
                     bar.addAction(actions[ac])

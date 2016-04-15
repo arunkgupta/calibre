@@ -5,8 +5,9 @@ import os, sys, Queue, threading, glob
 from contextlib import contextmanager
 from threading import RLock, Lock
 from urllib import unquote
+from PyQt5.QtWidgets import QStyle  # Gives a nicer error message than import from Qt
 from PyQt5.Qt import (
-    QFileInfo, QObject, QBuffer, Qt, QStyle, QByteArray, QTranslator,
+    QFileInfo, QObject, QBuffer, Qt, QByteArray, QTranslator,
     QCoreApplication, QThread, QEvent, QTimer, pyqtSignal, QDateTime,
     QDesktopServices, QFileDialog, QFileIconProvider, QSettings, QIcon,
     QApplication, QDialog, QUrl, QFont, QFontDatabase, QLocale, QFontInfo)
@@ -21,6 +22,7 @@ from calibre.ebooks.metadata import MetaInformation
 from calibre.utils.date import UNDEFINED_DATE
 from calibre.utils.localization import get_lang
 from calibre.utils.filenames import expanduser
+from calibre.utils.file_type_icons import EXT_MAP
 
 # Setup gprefs {{{
 gprefs = JSONConfig('gui')
@@ -102,6 +104,7 @@ defs['edit_metadata_single_layout'] = 'default'
 defs['default_author_link'] = 'https://en.wikipedia.org/w/index.php?search={author}'
 defs['preserve_date_on_ctl'] = True
 defs['manual_add_auto_convert'] = False
+defs['auto_convert_same_fmt'] = False
 defs['cb_fullscreen'] = False
 defs['worker_max_time'] = 0
 defs['show_files_after_save'] = True
@@ -112,6 +115,7 @@ defs['auto_add_auto_convert'] = True
 defs['auto_add_everything'] = False
 defs['ui_style'] = 'calibre' if iswindows or isosx else 'system'
 defs['tag_browser_old_look'] = False
+defs['tag_browser_hide_empty_categories'] = False
 defs['book_list_tooltips'] = True
 defs['bd_show_cover'] = True
 defs['bd_overlay_cover_size'] = False
@@ -136,6 +140,7 @@ defs['gpm_template_editor_font_size'] = 10
 defs['show_emblems'] = False
 defs['emblem_size'] = 32
 defs['emblem_position'] = 'left'
+defs['metadata_diff_mark_rejected'] = False
 del defs
 # }}}
 
@@ -252,11 +257,6 @@ config = _config()
 QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, config_dir)
 QSettings.setPath(QSettings.IniFormat, QSettings.SystemScope, config_dir)
 QSettings.setDefaultFormat(QSettings.IniFormat)
-
-# Turn off DeprecationWarnings in windows GUI
-if iswindows:
-    import warnings
-    warnings.simplefilter('ignore', DeprecationWarning)
 
 def available_heights():
     desktop  = QCoreApplication.instance().desktop()
@@ -494,56 +494,7 @@ class GetMetadata(QObject):
 
 class FileIconProvider(QFileIconProvider):
 
-    ICONS = {
-             'default' : 'unknown',
-             'dir'     : 'dir',
-             'zero'    : 'zero',
-
-             'jpeg'    : 'jpeg',
-             'jpg'     : 'jpeg',
-             'gif'     : 'gif',
-             'png'     : 'png',
-             'bmp'     : 'bmp',
-             'cbz'     : 'cbz',
-             'cbr'     : 'cbr',
-             'svg'     : 'svg',
-             'html'    : 'html',
-             'htmlz'   : 'html',
-             'htm'     : 'html',
-             'xhtml'   : 'html',
-             'xhtm'    : 'html',
-             'lit'     : 'lit',
-             'lrf'     : 'lrf',
-             'lrx'     : 'lrx',
-             'pdf'     : 'pdf',
-             'pdr'     : 'zero',
-             'rar'     : 'rar',
-             'zip'     : 'zip',
-             'txt'     : 'txt',
-             'text'    : 'txt',
-             'prc'     : 'mobi',
-             'azw'     : 'mobi',
-             'mobi'    : 'mobi',
-             'pobi'    : 'mobi',
-             'mbp'     : 'zero',
-             'azw1'    : 'tpz',
-             'azw2'    : 'azw2',
-             'azw3'    : 'azw3',
-             'azw4'    : 'pdf',
-             'tpz'     : 'tpz',
-             'tan'     : 'zero',
-             'epub'    : 'epub',
-             'fb2'     : 'fb2',
-             'rtf'     : 'rtf',
-             'odt'     : 'odt',
-             'snb'     : 'snb',
-             'djv'     : 'djvu',
-             'djvu'    : 'djvu',
-             'xps'     : 'xps',
-             'oxps'    : 'xps',
-             'docx'    : 'docx',
-             'opml'    : 'opml',
-             }
+    ICONS = EXT_MAP
 
     def __init__(self):
         QFileIconProvider.__init__(self)
@@ -746,7 +697,7 @@ def choose_osx_app(window, name, title, default_dir='/Applications'):
         return app
 
 def choose_files(window, name, title,
-                 filters=[], all_files=True, select_only_single_file=False):
+                 filters=[], all_files=True, select_only_single_file=False, default_dir=u'~'):
     '''
     Ask user to choose a bunch of files.
     :param name: Unique dialog name used to store the opened directory
@@ -759,7 +710,7 @@ def choose_files(window, name, title,
     :param select_only_single_file: If True only one file can be selected
     '''
     mode = QFileDialog.ExistingFile if select_only_single_file else QFileDialog.ExistingFiles
-    fd = FileDialog(title=title, name=name, filters=filters,
+    fd = FileDialog(title=title, name=name, filters=filters, default_dir=default_dir,
                     parent=window, add_all_files_filter=all_files, mode=mode,
                     )
     fd.setParent(None)
@@ -990,7 +941,8 @@ class Application(QApplication):
             if not depth_ok:
                 prints('Color depth is less than 32 bits disabling modern look')
 
-        self.using_calibre_style = force_calibre_style or (depth_ok and gprefs['ui_style'] != 'system')
+        self.using_calibre_style = force_calibre_style or 'CALIBRE_IGNORE_SYSTEM_THEME' in os.environ or (
+            depth_ok and gprefs['ui_style'] != 'system')
         if self.using_calibre_style:
             self.load_calibre_style()
 
@@ -1088,8 +1040,9 @@ def sanitize_env_vars():
     elif iswindows:
         env_vars = {k:None for k in 'MAGICK_HOME MAGICK_CONFIGURE_PATH MAGICK_CODER_MODULE_PATH MAGICK_FILTER_MODULE_PATH QT_PLUGIN_PATH'.split()}
     elif isosx:
-        env_vars = {k:None for k in
-                    'FONTCONFIG_FILE FONTCONFIG_PATH MAGICK_CONFIGURE_PATH MAGICK_CODER_MODULE_PATH MAGICK_FILTER_MODULE_PATH QT_PLUGIN_PATH'.split()}
+        env_vars = {k:None for k in (
+                    'FONTCONFIG_FILE FONTCONFIG_PATH MAGICK_CONFIGURE_PATH MAGICK_CODER_MODULE_PATH'
+                    ' MAGICK_FILTER_MODULE_PATH QT_PLUGIN_PATH SSL_CERT_FILE').split()}
     else:
         env_vars = {}
 
@@ -1148,16 +1101,16 @@ def open_local_file(path):
 
 _ea_lock = Lock()
 
-def ensure_app():
+def ensure_app(headless=True):
     global _store_app
     with _ea_lock:
         if _store_app is None and QApplication.instance() is None:
             args = sys.argv[:1]
-            headless = islinux or isbsd
-            if headless:
+            if headless and (islinux or isbsd):
                 args += ['-platformpluginpath', sys.extensions_location, '-platform', 'headless']
             _store_app = QApplication(args)
-            _store_app.headless = headless
+            if headless and (islinux or isbsd):
+                _store_app.headless = True
             import traceback
             # This is needed because as of PyQt 5.4 if sys.execpthook ==
             # sys.__excepthook__ PyQt will abort the application on an
@@ -1174,14 +1127,17 @@ def ensure_app():
                     pass
             sys.excepthook = eh
 
-def must_use_qt():
+def app_is_headless():
+    return getattr(_store_app, 'headless', False)
+
+def must_use_qt(headless=True):
     ''' This function should be called if you want to use Qt for some non-GUI
     task like rendering HTML/SVG or using a headless browser. It will raise a
     RuntimeError if using Qt is not possible, which will happen if the current
     thread is not the main GUI thread. On linux, it uses a special QPA headless
     plugin, so that the X server does not need to be running. '''
-    global gui_thread, _store_app
-    ensure_app()
+    global gui_thread
+    ensure_app(headless=headless)
     if gui_thread is None:
         gui_thread = QThread.currentThread()
     if gui_thread is not QThread.currentThread():
@@ -1209,7 +1165,7 @@ def elided_text(text, font=None, width=300, pos='middle'):
     of the string with an ellipsis. Results in a string much closer to the
     limit than Qt's elidedText().'''
     from PyQt5.Qt import QFontMetrics, QApplication
-    fm = QApplication.fontMetrics() if font is None else QFontMetrics(font)
+    fm = QApplication.fontMetrics() if font is None else (font if isinstance(font, QFontMetrics) else QFontMetrics(font))
     delta = 4
     ellipsis = u'\u2026'
 
@@ -1288,15 +1244,3 @@ def event_type_name(ev_or_etype):
         if num == etype:
             return name
     return 'UnknownEventType'
-
-if islinux or isbsd:
-    def workaround_broken_under_mouse(ch):
-        import sip
-        from PyQt5.Qt import QCursor, QToolButton
-        # See https://bugreports.qt-project.org/browse/QTBUG-40233
-        if isinstance(ch, QToolButton) and not sip.isdeleted(ch):
-            ch.setAttribute(Qt.WA_UnderMouse, ch.rect().contains(ch.mapFromGlobal(QCursor.pos())))
-            ch.update()
-else:
-    workaround_broken_under_mouse = None
-

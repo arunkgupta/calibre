@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -15,7 +15,7 @@ from PyQt5.Qt import (
     QDialog, QWidget, QGridLayout, QLabel, QToolButton, QIcon,
     QVBoxLayout, QDialogButtonBox, QApplication, pyqtSignal, QFont, QPixmap,
     QSize, QPainter, Qt, QColor, QPen, QSizePolicy, QScrollArea, QFrame,
-    QKeySequence, QAction, QMenu)
+    QKeySequence, QAction, QMenu, QHBoxLayout, QCheckBox)
 
 from calibre import fit_image
 from calibre.ebooks.metadata import title_sort, authors_to_sort_string, fmt_sidx
@@ -539,6 +539,7 @@ class CompareMany(QDialog):
         self.ids = list(ids)
         self.total = len(self.ids)
         self.accepted = OrderedDict()
+        self.rejected_ids = set()
         self.window_title = window_title or _('Compare metadata')
 
         if intro_msg:
@@ -553,21 +554,22 @@ class CompareMany(QDialog):
         sa.setWidgetResizable(True)
 
         self.bb = bb = QDialogButtonBox(QDialogButtonBox.Cancel)
+        bb.button(bb.Cancel).setAutoDefault(False)
         bb.rejected.connect(self.reject)
         if self.total > 1:
             self.aarb = b = bb.addButton(_('&Accept all remaining'), bb.YesRole)
-            b.setIcon(QIcon(I('ok.png')))
+            b.setIcon(QIcon(I('ok.png'))), b.setAutoDefault(False)
             if accept_all_tooltip:
                 b.setToolTip(accept_all_tooltip)
             b.clicked.connect(self.accept_all_remaining)
             self.rarb = b = bb.addButton(_('Re&ject all remaining'), bb.NoRole)
-            b.setIcon(QIcon(I('minus.png')))
+            b.setIcon(QIcon(I('minus.png'))), b.setAutoDefault(False)
             if reject_all_tooltip:
                 b.setToolTip(reject_all_tooltip)
             b.clicked.connect(self.reject_all_remaining)
             self.sb = b = bb.addButton(_('&Reject'), bb.ActionRole)
             b.clicked.connect(partial(self.next_item, False))
-            b.setIcon(QIcon(I('minus.png')))
+            b.setIcon(QIcon(I('minus.png'))), b.setAutoDefault(False)
             if reject_button_tooltip:
                 b.setToolTip(reject_button_tooltip)
             self.next_action = ac = QAction(self)
@@ -584,8 +586,15 @@ class CompareMany(QDialog):
             self.next_action.triggered.connect(b.click)
         b.setIcon(QIcon(I('forward.png' if self.total > 1 else 'ok.png')))
         b.clicked.connect(partial(self.next_item, True))
-        b.setDefault(True)
-        l.addWidget(bb)
+        b.setDefault(True), b.setAutoDefault(True)
+        self.bbh = h = QHBoxLayout()
+        h.setContentsMargins(0, 0, 0, 0)
+        l.addLayout(h)
+        self.markq = m = QCheckBox(_('&Mark rejected books'))
+        m.setChecked(gprefs['metadata_diff_mark_rejected'])
+        m.stateChanged[int].connect(lambda : gprefs.set('metadata_diff_mark_rejected', m.isChecked()))
+        m.setToolTip(_('Mark rejected books in the book list after this dialog is closed'))
+        h.addWidget(m), h.addWidget(bb)
 
         self.next_item(True)
 
@@ -598,6 +607,10 @@ class CompareMany(QDialog):
         if geom is not None:
             self.restoreGeometry(geom)
         b.setFocus(Qt.OtherFocusReason)
+
+    @property
+    def mark_rejected(self):
+        return self.markq.isChecked()
 
     def action_button_clicked(self):
         self.action_button_action(self.ids[0])
@@ -623,6 +636,8 @@ class CompareMany(QDialog):
             changed = self.compare_widget.apply_changes()
         if self.current_mi is not None:
             old_id = self.ids.pop(0)
+            if not accept:
+                self.rejected_ids.add(old_id)
             self.accepted[old_id] = (changed, self.current_mi) if accept else (False, None)
         if not self.ids:
             return self.accept()
@@ -645,10 +660,17 @@ class CompareMany(QDialog):
             return
         self.next_item(False)
         for id_ in self.ids:
+            self.rejected_ids.add(id_)
             oldmi, newmi = self.get_metadata(id_)
             self.accepted[id_] = (False, None)
         self.ids = []
         self.accept()
+
+    def keyPressEvent(self, ev):
+        if ev.key() in (Qt.Key_Enter, Qt.Key_Return):
+            ev.accept()
+            return
+        return QDialog.keyPressEvent(self, ev)
 
 if __name__ == '__main__':
     app = QApplication([])

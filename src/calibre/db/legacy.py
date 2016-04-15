@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -38,10 +38,12 @@ def cleanup_tags(tags):
 
 def create_backend(
         library_path, default_prefs=None, read_only=False,
-        progress_callback=lambda x, y:True, restore_all_prefs=False):
+        progress_callback=lambda x, y:True, restore_all_prefs=False,
+        load_user_formatter_functions=True):
     return DB(library_path, default_prefs=default_prefs,
                      read_only=read_only, restore_all_prefs=restore_all_prefs,
-                     progress_callback=progress_callback)
+                     progress_callback=progress_callback,
+                     load_user_formatter_functions=load_user_formatter_functions)
 
 class LibraryDatabase(object):
 
@@ -67,7 +69,8 @@ class LibraryDatabase(object):
 
         backend = self.backend = create_backend(library_path, default_prefs=default_prefs,
                     read_only=read_only, restore_all_prefs=restore_all_prefs,
-                    progress_callback=progress_callback)
+                    progress_callback=progress_callback,
+                    load_user_formatter_functions=not is_second_db)
         cache = self.new_api = Cache(backend)
         cache.init()
         self.data = View(cache)
@@ -121,7 +124,7 @@ class LibraryDatabase(object):
         return self.backend.dbpath
 
     def last_modified(self):
-        return self.backend.last_modified()
+        return self.new_api.last_modified()
 
     def check_if_modified(self):
         if self.last_modified() > self.last_update_check:
@@ -244,28 +247,27 @@ class LibraryDatabase(object):
             self.notify('add', book_ids)
         return book_ids[0]
 
-    def find_books_in_directory(self, dirpath, single_book_per_directory):
-        return find_books_in_directory(dirpath, single_book_per_directory)
+    def find_books_in_directory(self, dirpath, single_book_per_directory, compiled_rules=()):
+        return find_books_in_directory(dirpath, single_book_per_directory, compiled_rules=compiled_rules)
 
-    def import_book_directory_multiple(self, dirpath, callback=None,
-            added_ids=None):
-        return import_book_directory_multiple(self, dirpath, callback=callback, added_ids=added_ids)
+    def import_book_directory_multiple(self, dirpath, callback=None, added_ids=None, compiled_rules=()):
+        return import_book_directory_multiple(self, dirpath, callback=callback, added_ids=added_ids, compiled_rules=compiled_rules)
 
-    def import_book_directory(self, dirpath, callback=None, added_ids=None):
-        return import_book_directory(self, dirpath, callback=callback, added_ids=added_ids)
+    def import_book_directory(self, dirpath, callback=None, added_ids=None, compiled_rules=()):
+        return import_book_directory(self, dirpath, callback=callback, added_ids=added_ids, compiled_rules=compiled_rules)
 
-    def recursive_import(self, root, single_book_per_directory=True,
-            callback=None, added_ids=None):
-        return recursive_import(self, root, single_book_per_directory=single_book_per_directory, callback=callback, added_ids=added_ids)
+    def recursive_import(self, root, single_book_per_directory=True, callback=None, added_ids=None, compiled_rules=()):
+        return recursive_import(
+            self, root, single_book_per_directory=single_book_per_directory, callback=callback, added_ids=added_ids, compiled_rules=compiled_rules)
 
     def add_catalog(self, path, title):
-        book_id, new_book_added = add_catalog(self.new_api, path, title)
+        book_id, new_book_added = add_catalog(self.new_api, path, title, dbapi=self)
         if book_id is not None and new_book_added:
             self.data.books_added((book_id,))
         return book_id
 
     def add_news(self, path, arg):
-        book_id = add_news(self.new_api, path, arg)
+        book_id = add_news(self.new_api, path, arg, dbapi=self)
         if book_id is not None:
             self.data.books_added((book_id,))
         return book_id
@@ -773,7 +775,7 @@ LibraryDatabase.format_hash = MT(lambda self, book_id, fmt:self.new_api.format_h
 LibraryDatabase.index = MT(lambda self, book_id, cache=False:self.data.id_to_index(book_id))
 LibraryDatabase.has_cover = MT(lambda self, book_id:self.new_api.field_for('cover', book_id))
 LibraryDatabase.get_tags = MT(lambda self, book_id:set(self.new_api.field_for('tags', book_id)))
-LibraryDatabase.get_categories = MT(lambda self, sort='name', ids=None, icon_map=None:self.new_api.get_categories(sort=sort, book_ids=ids, icon_map=icon_map))
+LibraryDatabase.get_categories = MT(lambda self, sort='name', ids=None:self.new_api.get_categories(sort=sort, book_ids=ids))
 LibraryDatabase.get_identifiers = MT(
     lambda self, index, index_is_id=False: self.new_api.field_for('identifiers', index if index_is_id else self.id(index)))
 LibraryDatabase.isbn = MT(
@@ -914,7 +916,6 @@ for meth in ('get_next_series_num_for', 'has_book', 'author_sort_from_authors'):
         return func
     setattr(LibraryDatabase, meth, MT(getter(meth)))
 
-LibraryDatabase.move_library_to = MT(lambda self, newloc, progress=None:self.new_api.move_library_to(newloc, progress=progress))
 LibraryDatabase.saved_search_names = MT(lambda self:self.new_api.saved_search_names())
 LibraryDatabase.saved_search_lookup = MT(lambda self, x:self.new_api.saved_search_lookup(x))
 LibraryDatabase.saved_search_set_all = MT(lambda self, smap:self.new_api.saved_search_set_all(smap))

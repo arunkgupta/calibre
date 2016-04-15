@@ -1,5 +1,11 @@
+#include <QtGlobal>
 #include "headless_integration.h"
 #include "headless_backingstore.h"
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 4, 1))
+#include "fontconfig_database.h"
+#else
+#include <QtPlatformSupport/private/qfontconfigdatabase_p.h>
+#endif
 #ifndef Q_OS_WIN
 #include <QtPlatformSupport/private/qgenericunixeventdispatcher_p.h>
 #else
@@ -10,7 +16,6 @@
 #include <QtGui/private/qguiapplication_p.h>
 #include <qpa/qplatformwindow.h>
 #include <qpa/qplatformfontdatabase.h>
-#include <QtPlatformSupport/private/qfontconfigdatabase_p.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -19,7 +24,12 @@ class GenericUnixServices : public QGenericUnixServices {
      * Qt will try to query the nativeInterface() without checking if it exists
      * leading to a segfault.  For example, defaultHintStyleFromMatch() queries
      * the nativeInterface() without checking that it is NULL. See
-     * https://bugreports.qt-project.org/browse/QTBUG-40946 */
+     * https://bugreports.qt-project.org/browse/QTBUG-40946 
+     * This is no longer strictly neccessary since we implement our own fontconfig database 
+     * (a patched version of the Qt fontconfig database). However, it is probably a good idea to
+     * keep it unknown, since the headless QPA is used in contexts where a desktop environment 
+     * does not make sense anyway.
+     */
     QByteArray desktopEnvironment() const { return QByteArrayLiteral("UNKNOWN"); }
 };
 
@@ -47,18 +57,18 @@ bool HeadlessIntegration::hasCapability(QPlatformIntegration::Capability cap) co
     switch (cap) {
     case ThreadedPixmaps: return true;
     case MultipleWindows: return true;
+    case OpenGL: return false;
+    case ThreadedOpenGL: return false;
     default: return QPlatformIntegration::hasCapability(cap);
     }
 }
 
-// Dummy font database that does not scan the fonts directory to be
-// used for command line tools like qmlplugindump that do not create windows
-// unless DebugBackingStore is activated.
-class DummyFontDatabase : public QPlatformFontDatabase
+QPlatformOpenGLContext *HeadlessIntegration::createPlatformOpenGLContext(QOpenGLContext *context) const
 {
-public:
-    virtual void populateFontDatabase() {}
-};
+    Q_UNUSED(context);
+    // Suppress warnings about this plugin not supporting createPlatformOpenGLContext that come from the default implementation of this function
+    return 0;
+}
 
 QPlatformFontDatabase *HeadlessIntegration::fontDatabase() const
 {

@@ -1,0 +1,93 @@
+# vim:fileencoding=utf-8
+# License: GPL v3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
+
+def debounce(func, wait, immediate=False):
+    # Returns a function, that, as long as it continues to be invoked, will not
+    # be triggered. The function will be called after it stops being called for
+    # wait milliseconds. If `immediate` is True, trigger the function on the
+    # leading edge, instead of the trailing.
+    timeout = None
+    return def debounce_inner():  # noqa: unused-local
+        nonlocal timeout
+        context, args = this, arguments
+        def later():
+            nonlocal timeout
+            timeout = None
+            if not immediate:
+                func.apply(context, args)
+        call_now = immediate and not timeout
+        window.clearTimeout(timeout)
+        timeout = window.setTimeout(later, wait)
+        if call_now:
+            func.apply(context, args)
+
+def parse_url_params(url=None, allow_multiple=False):
+    url = url or window.location.href
+    qs = url.indexOf('?')
+    ans = {}
+    if qs < 0:
+        return ans
+    q = url.slice(qs + 1, ((url.indexOf('#') + 1) or (url.length + 1)))
+    if not q:
+        return ans
+    pairs = q.replace(/\+/g, " ").split("&")
+    for pair in pairs:
+        key, val = pair.partition('=')[::2]
+        key, val = decodeURIComponent(key), decodeURIComponent(val)
+        if allow_multiple:
+            if not Object.prototype.hasOwnProperty.call(ans, key):
+                ans[key] = []
+            ans[key].append(val)
+        else:
+            ans[key] = val
+    return ans
+
+_roman = list(zip(
+[1000,900,500,400,100,90,50,40,10,9,5,4,1],
+["M","CM","D","CD","C","XC","L","XL","X","IX","V","IV","I"]
+))
+
+def roman(num):
+    if num <= 0 or num >= 4000 or int(num) is not num:
+        return num + ''
+    result = []
+    for d, r in _roman:
+        while num >= d:
+            result.append(r)
+            num -= d
+    return result.join('')
+
+def fmt_sidx(val, fmt='{:.2f}', use_roman=True):
+    if val is undefined or val is None or val is '':
+        return '1'
+    if int(val) is float(val):
+        if use_roman:
+            return roman(val)
+        return int(val) + ''
+    return fmt.format(float(val))
+
+def human_readable(size, sep=' '):
+    divisor, suffix = 1, "B"
+    for i, candidate in enumerate(('B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB')):
+        if size < (1 << ((i + 1) * 10)):
+            divisor, suffix = (1 << (i * 10)), candidate
+            break
+    size = (float(size)/divisor) + ''
+    pos = size.find(".")
+    if pos > -1:
+        size = size[:pos + 2]
+    if size.endswith('.0'):
+        size = size[:-2]
+    return size + sep + suffix
+
+def document_height():
+    html = document.documentElement
+    return max(document.body.scrollHeight, document.body.offsetHeight, html.clientHeight, html.scrollHeight, html.offsetHeight)
+
+def document_width():
+    html = document.documentElement
+    return max(document.body.scrollWidth, document.body.offsetWidth, html.clientWidth, html.scrollWidth, html.offsetWidth)
+
+if __name__ is '__main__':
+    print(fmt_sidx(10), fmt_sidx(1.2))
+    print(list(map(human_readable, [1, 1024.0, 1025, 1024*1024*2.3])))

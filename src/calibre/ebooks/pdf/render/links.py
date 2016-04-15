@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -16,7 +16,7 @@ from calibre.ebooks.pdf.render.common import Array, Name, Dictionary, String, UT
 class Destination(Array):
 
     def __init__(self, start_page, pos, get_pageref):
-        pnum = start_page + pos['column']
+        pnum = start_page + max(0, pos['column'])
         try:
             pref = get_pageref(pnum)
         except IndexError:
@@ -78,7 +78,11 @@ class Links(object):
                         pass
             else:
                 url = href + (('#'+frag) if frag else '')
-                purl = urlparse(url)
+                try:
+                    purl = urlparse(url)
+                except Exception:
+                    self.pdf.debug('Ignoring unparseable URL: %r' % url)
+                    continue
                 if purl.scheme and purl.scheme != 'file':
                     action = Dictionary({
                         'Type':Name('Action'), 'S':Name('URI'),

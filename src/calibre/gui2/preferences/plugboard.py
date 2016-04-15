@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -392,7 +392,7 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         self.changed_signal.emit()
 
     def commit(self):
-        self.db.prefs.set('plugboards', self.current_plugboards)
+        self.db.new_api.set_pref('plugboards', self.current_plugboards)
         return ConfigWidgetBase.commit(self)
 
     def refresh_gui(self, gui):

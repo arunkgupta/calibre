@@ -281,7 +281,7 @@ Preferences
 
     1. **Preferences**: Allows you to change the way various aspects of calibre work. Clicking the button also performs this action.
     2. **Run welcome wizard**: Allows you to start the Welcome Wizard which appeared the first time you started calibre.
-    3. **Get plugins to enhance calibre**: Opens a new windows that shows plugins for calibre. These plugins are developed by third parties to extend calibre's functionality.
+    3. **Get plugins to enhance calibre**: Opens a new window that shows plugins for calibre. These plugins are developed by third parties to extend calibre's functionality.
     4. **Restart in debug mode**: Allows you to enable a debugging mode that can assist the calibre developers in solving problems you encounter with the program. For most users this should remain disabled unless instructed by a developer to enable it.
 
 .. _catalogs:
@@ -441,8 +441,6 @@ calibre allows you to save a frequently used search under a special name and the
 
 Now you can access your saved search in the Tag Browser under "Searches". A single click will allow you to reuse any arbitrarily complex search easily, without needing to re-create it.
 
-.. _config_filename_metadata:
-
 Virtual Libraries
 -------------------
 
@@ -452,21 +450,33 @@ partition your large collection of books into smaller, manageable chunks. To
 learn how to create and use virtual libraries, see the tutorial:
 :ref:`virtual_libraries`.
 
+.. _config_filename_metadata:
+
 Guessing metadata from file names
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-In the :guilabel:`Add/Save` section of the configuration dialog, you can specify a regular expression that calibre will use to try and guess metadata from the names of ebook files
-that you add to the library. The default regular expression is::
+------------------------------------
+
+Normally, calibre reads metadata from inside the book file. However, it can
+be configured to read metadata from the file name instead, via
+:guilabel:`Preferences->Adding Books->Read metadata from file contents`.
+
+You can also control how metadata is read from the filename using regular
+expressions (see :doc:`regexp`).  In the :guilabel:`Adding Books` section of
+the configuration dialog, you can specify a regular expression that calibre
+will use to try and guess metadata from the names of ebook files that you add
+to the library. The default regular expression is::
 
     title - author
 
-i.e., it assumes that all characters up to the first ``-`` are the title of the book and subsequent characters are the author of the book. For example, the filename::
+that is, it assumes that all characters up to the first ``-`` are the title of
+the book and subsequent characters are the author of the book. For example, the
+filename::
 
     Foundation and Earth - Isaac Asimov.txt
 
 will be interpreted to have the title: Foundation and Earth and author: Isaac Asimov
 
 .. tip::
-    If the filename does not contain the hyphen, the regular expression will fail.
+    If the filename does not contain the hyphen, the above regular expression will fail.
 
 .. _book_details:
 
@@ -488,11 +498,15 @@ automatically show you links pointing to the web pages for the book on amazon,
 worldcat, etc. from where the metadata was downloaded.
 
 You can right click on individual ebook formats in the Book Details panel to
-delete them, compare them to their original versions, save them to disk, etc.
+delete them, compare them to their original versions, save them to disk, open
+them with an external program, etc.
 
 You can change the cover of the book by simply drag and dropping an
-image onto the book details panel. You can also add ebook files to the current
-book by drag and dropping the files onto the book details panel.
+image onto the book details panel. If you wish to edit the cover image in
+an external program, simply right click on it and choose :guilabel:`Open With`.
+
+You can also add ebook files to the current book by drag and dropping the files
+onto the book details panel.
 
 Double clicking the book details panel will open it up in a separate popup
 window.
@@ -531,7 +545,7 @@ Hierarchical items (items with children) use the same four 'click-on' searches a
 
 You can drag and drop items in the Tag browser onto user categories to add them to that category. If the source is a user category, holding the shift key while dragging will move the item to the new category. You can also drag and drop books from the book list onto items in the Tag Browser; dropping a book on an item causes that item to be automatically applied to the dropped books. For example, dragging a book onto Isaac Asimov will set the author of that book to Isaac Asimov. Dropping it onto the tag History will add the tag History to the book's tags.
 
-There is a search bar at the top of the Tag Browser that allows you to easily find any item in the Tag Browser. In addition, you can right click on any item and choose one of several operations. Some examples are to hide the it, rename it, or open a "Manage x" dialog that allows you to manage items of that kind. For example, the "Manage Authors" dialog allows you to rename authors and control how their names are sorted.
+There is a search bar at the top of the Tag Browser that allows you to easily find any item in the Tag Browser. In addition, you can right click on any item and choose one of several operations. Some examples are to hide it, rename it, or open a "Manage x" dialog that allows you to manage items of that kind. For example, the "Manage Authors" dialog allows you to rename authors and control how their names are sorted.
 
 You can control how items are sorted in the Tag browser via the :guilabel:`Alter Tag Browser` button at the bottom of the Tag Browser. You can choose to sort by name, average rating or popularity (popularity is the number of books with an item in your library; for example, the popularity of Isaac Asimov is the number of books in your library by Isaac Asimov).
 
@@ -568,7 +582,7 @@ browser display itself in a separate popup window.
 Quickview
 ----------
 
-Sometimes you want to to select a book and quickly get a list of books with the same value in some category (authors, tags, publisher, series, etc) as the currently selected book, but without changing the current view of the library. You can do this with Quickview. Quickview opens a second window showing the list of books matching the value of interest.
+Sometimes you want to select a book and quickly get a list of books with the same value in some category (authors, tags, publisher, series, etc) as the currently selected book, but without changing the current view of the library. You can do this with Quickview. Quickview opens a second window showing the list of books matching the value of interest.
 
 For example, assume you want to see a list of all the books with the same author of the currently-selected book. Click in the author cell you are interested in and press the 'Q' key. A window will open with all the authors for that book on the left, and all the books by the selected author on the right. 
 
@@ -652,6 +666,8 @@ Calibre has several keyboard shortcuts to save you time and mouse movement. Thes
       - Polish books
     * - :kbd:`S`
       - Save to Disk
+    * - :kbd:`T`
+      - Edit Book
     * - :kbd:`V`
       - View
     * - :kbd:`Alt+V/Cmd+V in OS X`
@@ -688,25 +704,29 @@ Calibre has several keyboard shortcuts to save you time and mouse movement. Thes
       - Clear the additional restriction
     * - :kbd:`Ctrl+*`
       - Create a temporary virtual library based on the current search
+    * - :kbd:`Ctrl+Right`
+      - Select the next virtual library tab
+    * - :kbd:`Ctrl+Left`
+      - Select the previous virtual library tab
     * - :kbd:`N or F3`
-      - Find the next book that matches the current search (only works if the highlight checkbox next to the search bar is checked)
+      - Find the next book that matches the current search (only works if search highlighting is turned on in search preferences)
     * - :kbd:`Shift+N or Shift+F3`
-      - Find the next book that matches the current search (only works if the highlight checkbox next to the search bar is checked)
+      - Find the previous book that matches the current search (only works if search highlighting is turned on in search preferences)
     * - :kbd:`Ctrl+D`
-      - Download metadata and shortcuts
+      - Download metadata and covers
     * - :kbd:`Ctrl+R`
       - Restart calibre
     * - :kbd:`Ctrl+Shift+R`
       - Restart calibre in debug mode
     * - :kbd:`Shift+Ctrl+E`
       - Add empty books to calibre
+    * - :kbd:`Ctrl+M`
+      - Toggle Mark/unmarked status on selected books
+    * - :kbd:`Q`
+      - Open the Quick View popup for viewing books in related series/tags/etc.
+    * - :kbd:`Shift+Q`
+      - Focus the opened Quick View panel
+    * - :kbd:`Shift+S`
+      - Perform a search in the Quick View panel
     * - :kbd:`Ctrl+Q`
       - Quit calibre
-
-
-
-
-
-
-
-

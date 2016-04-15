@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -22,11 +22,13 @@ include_pat = re.compile(r'^.. include:: (\S+.rst)', re.M)
 
 def source_read_handler(app, docname, source):
     src = source[0]
-    src = src.replace(' generated/|lang|', ' generated/' + app.config.language).replace('|lang|', 'en')
+    if app.builder.name != 'gettext' and app.config.language != 'en':
+        src = re.sub(r'(\s+generated/)en/', r'\1' + app.config.language + '/', src)
     # Sphinx does not call source_read_handle for the .. include directive
     for m in reversed(tuple(include_pat.finditer(src))):
-        ss = [open(m.group(1)).read().decode('utf-8')]
-        source_read_handler(app, m.group(1).partition('.')[0], ss)
+        included_doc_name = m.group(1).lstrip('/')
+        ss = [open(included_doc_name).read().decode('utf-8')]
+        source_read_handler(app, included_doc_name.partition('.')[0], ss)
         src = src[:m.start()] + ss[0] + src[m.end():]
     source[0] = src
 
@@ -70,6 +72,12 @@ CLI_PREAMBLE='''\
 {usage}
 '''
 
+def titlecase(app, x):
+    if x and app.config.language == 'en':
+        from calibre.utils.titlecase import titlecase as tc
+        x = tc(x)
+    return x
+
 def generate_calibredb_help(preamble, app):
     from calibre.library.cli import COMMANDS, get_parser
     import calibre.library.cli as cli
@@ -84,7 +92,7 @@ def generate_calibredb_help(preamble, app):
     global_parser = get_parser('')
     groups = []
     for grp in global_parser.option_groups:
-        groups.append((grp.title.capitalize(), grp.description, grp.option_list))
+        groups.append((titlecase(app, grp.title), grp.description, grp.option_list))
 
     global_options = '\n'.join(render_options('calibredb', groups, False, False))
 
@@ -109,6 +117,11 @@ def generate_calibredb_help(preamble, app):
         lines += ['']
         lines += render_options('calibredb '+cmd, groups, False)
         lines += ['']
+        for group in parser.option_groups:
+            if not getattr(group, 'is_global_options', False):
+                lines.extend(render_options(
+                    'calibredb_' + cmd, [[titlecase(app, group.title), group.description, group.option_list]], False, False, header_level='^'))
+        lines += ['']
 
     raw = preamble + '\n\n'+'.. contents::\n  :local:'+ '\n\n' + global_options+'\n\n'+'\n'.join(lines)
     update_cli_doc('calibredb', raw, app)
@@ -125,7 +138,7 @@ def generate_ebook_convert_help(preamble, app):
     groups = [(None, None, parser.option_list)]
     for grp in parser.option_groups:
         if grp.title not in {'INPUT OPTIONS', 'OUTPUT OPTIONS'}:
-            groups.append((grp.title.title(), grp.description, grp.option_list))
+            groups.append((titlecase(app, grp.title), grp.description, grp.option_list))
     options = '\n'.join(render_options('ebook-convert', groups, False))
 
     raw += '\n\n.. contents::\n  :local:'
@@ -167,15 +180,15 @@ def update_cli_doc(name, raw, app):
             os.makedirs(p)
         open(path, 'wb').write(raw)
 
-def render_options(cmd, groups, options_header=True, add_program=True):
+def render_options(cmd, groups, options_header=True, add_program=True, header_level='~'):
     lines = ['']
     if options_header:
-        lines = ['[options]', '-'*15, '']
+        lines = [_('[options]'), '-'*40, '']
     if add_program:
         lines += ['.. program:: '+cmd, '']
     for title, desc, options in groups:
         if title:
-            lines.extend([title, '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~'])
+            lines.extend([title, header_level * (len(title) + 4)])
             lines.append('')
         if desc:
             lines.extend([desc, ''])
@@ -183,15 +196,25 @@ def render_options(cmd, groups, options_header=True, add_program=True):
                 y.get_opt_string())):
             help = opt.help if opt.help else ''
             help = help.replace('\n', ' ').replace('*', '\\*').replace('%default', str(opt.default))
+            help = help.replace('"', r'\ ``"``\ ')
+            help = help.replace("'", r"\ ``'``\ ")
             help = mark_options(help)
             opt = opt.get_opt_string() + ((', '+', '.join(opt._short_opts)) if opt._short_opts else '')
-            opt = '.. cmdoption:: '+opt
+            opt = '.. option:: '+opt
             lines.extend([opt, '', '    '+help, ''])
     return lines
 
 def mark_options(raw):
     raw = re.sub(r'(\s+)--(\s+)', r'\1``--``\2', raw)
-    raw = re.sub(r'(--[a-zA-Z0-9_=,-]+)', r':option:`\1`', raw)
+    def sub(m):
+        opt = m.group()
+        a, b = opt.partition('=')[::2]
+        if a in ('--option1', '--option2'):
+            return m.group()
+        a = ':option:`' + a + '`'
+        b = (' = ``' + b + '``') if b else ''
+        return a + b
+    raw = re.sub(r'(--[|()a-zA-Z0-9_=,-]+)', sub, raw)
     return raw
 
 def cli_docs(app):

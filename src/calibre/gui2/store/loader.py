@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -23,7 +23,7 @@ class VersionMismatch(ValueError):
         ValueError.__init__(self, 'calibre too old')
         self.ver = ver
 
-def download_updates(ver_map={}, server='https://status.calibre-ebook.com'):
+def download_updates(ver_map={}, server='https://code.calibre-ebook.com'):
     from calibre.utils.https import get_https_resource_securely
     data = {k:type(u'')(v) for k, v in ver_map.iteritems()}
     data['ver'] = '1'
@@ -37,7 +37,7 @@ def download_updates(ver_map={}, server='https://status.calibre-ebook.com'):
         name = name.decode('utf-8')
         d = decompressobj()
         src = d.decompress(raw)
-        src = src.decode('utf-8')
+        src = src.decode('utf-8').lstrip(u'\ufeff')
         # Python complains if there is a coding declaration in a unicode string
         src = re.sub(r'^#.*coding\s*[:=]\s*([-\w.]+)', '#', src, flags=re.MULTILINE)
         # Translate newlines to \n
@@ -192,8 +192,8 @@ if __name__ == '__main__':
     for name, code in download_updates():
         count += 1
         print(name)
-        print(code)
+        print(code.encode('utf-8'))
         print('\n', '_'*80, '\n', sep='')
-    print ('Time to download all %d plugins: %.2f'%(count, time.time() - st))
+    print ('Time to download all %d plugins: %.2f seconds'%(count, time.time() - st))
 
 

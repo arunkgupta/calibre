@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 __copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
 __docformat__ = 'restructuredtext en'
 __license__   = 'GPL v3'
@@ -38,6 +38,8 @@ class EditAuthorsDialog(QDialog, Ui_EditAuthorsDialog):
         except:
             pass
 
+        self.buttonBox.button(QDialogButtonBox.Ok).setText(_('&OK'))
+        self.buttonBox.button(QDialogButtonBox.Cancel).setText(_('&Cancel'))
         self.buttonBox.accepted.connect(self.accepted)
 
         # Set up the column headings
@@ -114,6 +116,7 @@ class EditAuthorsDialog(QDialog, Ui_EditAuthorsDialog):
         self.find_box.lineEdit().returnPressed.connect(self.do_find)
         self.find_box.editTextChanged.connect(self.find_text_changed)
         self.find_button.clicked.connect(self.do_find)
+        self.find_button.setDefault(True)
 
         l = QLabel(self.table)
         self.not_found_label = l

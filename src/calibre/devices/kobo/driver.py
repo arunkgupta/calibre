@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import division
 
@@ -13,7 +13,7 @@ Originally developed by Timothy Legge <timlegge@gmail.com>.
 Extended to support Touch firmware 2.0.0 and later and newer devices by David Forrester <davidfor@internode.on.net>
 '''
 
-import os, time, shutil
+import os, time, shutil, re
 
 from contextlib import closing
 from calibre.devices.usbms.books import BookList
@@ -64,11 +64,11 @@ class KOBO(USBMS):
     gui_name = 'Kobo Reader'
     description = _('Communicate with the Kobo Reader')
     author = 'Timothy Legge and David Forrester'
-    version = (2, 1, 7)
+    version = (2, 1, 11)
 
     dbversion = 0
     fwversion = 0
-    supported_dbversion = 112
+    supported_dbversion = 125
     has_kepubs = False
 
     supported_platforms = ['windows', 'osx', 'linux']
@@ -116,7 +116,7 @@ class KOBO(USBMS):
                 ' by default they are no longer displayed as there is no good reason to '
                 'see them.  Enable if you wish to see/delete them.'),
             _('Show Recommendations') +
-            ':::'+_('Kobo now shows recommendations on the device.  In some case these have '
+            ':::'+_('Kobo now shows recommendations on the device. In some cases these have '
                 'files but in other cases they are just pointers to the web site to buy. '
                 'Enable if you wish to see/delete them.'),
             _('Attempt to support newer firmware') +
@@ -152,6 +152,10 @@ class KOBO(USBMS):
     def device_database_path(self):
         return self.normalize_path(self._main_prefix + '.kobo/KoboReader.sqlite')
 
+    def sanitize_path_components(self, components):
+        invalid_filename_chars_re = re.compile(r'[\/\\\?%\*:;\|\"\'><\$!]', re.IGNORECASE | re.UNICODE)
+        return [invalid_filename_chars_re.sub('_', x) for x in components]
+
     def books(self, oncard=None, end_session=True):
         from calibre.ebooks.metadata.meta import path_to_ext
 
@@ -173,7 +177,7 @@ class KOBO(USBMS):
 
         # Determine the firmware version
         try:
-            with open(self.normalize_path(self._main_prefix + '.kobo/version'),
+            with lopen(self.normalize_path(self._main_prefix + '.kobo/version'),
                     'rb') as f:
                 self.fwversion = f.readline().split(',')[2]
         except:
@@ -693,8 +697,8 @@ class KOBO(USBMS):
         if extension == '.kobo':
             from calibre.devices.errors import UserFeedback
             raise UserFeedback(_("Not Implemented"),
-                    _('".kobo" files do not exist on the device as books '
-                        'instead, they are rows in the sqlite database. '
+                    _('".kobo" files do not exist on the device as books; '
+                        'instead they are rows in the sqlite database. '
                     'Currently they cannot be exported or viewed.'),
                     UserFeedback.WARN)
 
@@ -1007,7 +1011,7 @@ class KOBO(USBMS):
                         fpath = self.normalize_path(fpath.replace('/', os.sep))
 
                         if os.path.exists(fpath):
-                            with open(cover, 'rb') as f:
+                            with lopen(cover, 'rb') as f:
                                 data = f.read()
 
                             # Return the data resized and in Grayscale if
@@ -1016,7 +1020,7 @@ class KOBO(USBMS):
                                     grayscale=uploadgrayscale,
                                     resize_to=resize, return_data=True)
 
-                            with open(fpath, 'wb') as f:
+                            with lopen(fpath, 'wb') as f:
                                 f.write(data)
                                 fsync(f)
 
@@ -1036,7 +1040,7 @@ class KOBO(USBMS):
         '''
         for idx, path in enumerate(paths):
             if path.find('kepub') >= 0:
-                with closing(open(path, 'rb')) as r:
+                with closing(lopen(path, 'rb')) as r:
                     tf = PersistentTemporaryFile(suffix='.epub')
                     shutil.copyfileobj(r, tf)
 #                    tf.write(r.read())
@@ -1256,7 +1260,7 @@ class KOBOTOUCH(KOBO):
     description = 'Communicate with the Kobo Touch, Glo, Mini and Aura HD ereaders. Based on the existing Kobo driver by %s.' % (KOBO.author)
 #    icon        = I('devices/kobotouch.jpg')
 
-    supported_dbversion             = 112
+    supported_dbversion             = 125
     min_supported_dbversion         = 53
     min_dbversion_series            = 65
     min_dbversion_externalid        = 65
@@ -1265,12 +1269,15 @@ class KOBOTOUCH(KOBO):
     min_dbversion_activity          = 77
     min_dbversion_keywords          = 82
 
-    max_supported_fwversion         = (3, 12, 1)
+    max_supported_fwversion         = (3, 19, 5761)
+    # The following document firwmare versions where new function or devices were added.
+    # Not all are used, but this feels a good place to record it.
     min_fwversion_shelves           = (2, 0, 0)
     min_fwversion_images_on_sdcard  = (2, 4, 1)
     min_fwversion_images_tree       = (2, 9, 0)  # Cover images stored in tree under .kobo-images
-    min_aurah2o_fwversion           = (3, 7, 0)  # Not used yet
-    min_reviews_fwversion           = (3, 12, 0) # Not used yet
+    min_aurah2o_fwversion           = (3, 7, 0)
+    min_reviews_fwversion           = (3, 12, 0)
+    min_glohd_fwversion             = (3, 14, 0)
 
     has_kepubs = True
 
@@ -1367,14 +1374,18 @@ class KOBOTOUCH(KOBO):
     AURA_HD_PRODUCT_ID  = [0x4193]
     AURA_H2O_PRODUCT_ID = [0x4213]
     GLO_PRODUCT_ID      = [0x4173]
+    GLO_HD_PRODUCT_ID   = [0x4223]
     MINI_PRODUCT_ID     = [0x4183]
     TOUCH_PRODUCT_ID    = [0x4163]
-    PRODUCT_ID          = AURA_PRODUCT_ID + AURA_HD_PRODUCT_ID + AURA_H2O_PRODUCT_ID + GLO_PRODUCT_ID + MINI_PRODUCT_ID + TOUCH_PRODUCT_ID
+    TOUCH2_PRODUCT_ID   = [0x4224]
+    PRODUCT_ID          = AURA_PRODUCT_ID + AURA_HD_PRODUCT_ID + AURA_H2O_PRODUCT_ID + \
+                          GLO_PRODUCT_ID + GLO_HD_PRODUCT_ID + \
+                          MINI_PRODUCT_ID + TOUCH_PRODUCT_ID +TOUCH2_PRODUCT_ID
 
     BCD = [0x0110, 0x0326]
 
     # Image file name endings. Made up of: image size, min_dbversion, max_dbversion, isFullSize,
-    # Note: "200" has been used just as a much larger number than the current versions. It is just a lazy 
+    # Note: "200" has been used just as a much larger number than the current versions. It is just a lazy
     #    way of making it open ended.
     COVER_FILE_ENDINGS = {
                           ' - N3_FULL.parsed':[(600,800),0, 200,True,],            # Used for screensaver, home screen
@@ -1440,7 +1451,7 @@ class KOBOTOUCH(KOBO):
 
         # Determine the firmware version
         try:
-            with open(self.normalize_path(self._main_prefix + '.kobo/version'), 'rb') as f:
+            with lopen(self.normalize_path(self._main_prefix + '.kobo/version'), 'rb') as f:
                 self.fwversion = f.readline().split(',')[2]
                 self.fwversion = tuple((int(x) for x in self.fwversion.split('.')))
         except:
@@ -2437,7 +2448,7 @@ class KOBOTOUCH(KOBO):
                                 fpath = path + ending
                                 fpath = self.normalize_path(fpath.replace('/', os.sep))
 
-                                with open(cover, 'rb') as f:
+                                with lopen(cover, 'rb') as f:
                                     data = f.read()
 
                                 if keep_cover_aspect:
@@ -2457,7 +2468,7 @@ class KOBOTOUCH(KOBO):
                                         grayscale=uploadgrayscale,
                                         resize_to=resize, return_data=True)
 
-                                with open(fpath, 'wb') as f:
+                                with lopen(fpath, 'wb') as f:
                                     f.write(data)
                                     fsync(f)
                 except Exception as e:
@@ -2784,13 +2795,19 @@ class KOBOTOUCH(KOBO):
         return self.detected_device.idProduct in self.AURA_H2O_PRODUCT_ID
     def isGlo(self):
         return self.detected_device.idProduct in self.GLO_PRODUCT_ID
+    def isGloHD(self):
+        return self.detected_device.idProduct in self.GLO_HD_PRODUCT_ID
     def isMini(self):
         return self.detected_device.idProduct in self.MINI_PRODUCT_ID
     def isTouch(self):
         return self.detected_device.idProduct in self.TOUCH_PRODUCT_ID
+    def isTouch2(self):
+        return self.detected_device.idProduct in self.TOUCH2_PRODUCT_ID
 
     def cover_file_endings(self):
-        return self.GLO_COVER_FILE_ENDINGS if self.isGlo() or self.isAura() else self.AURA_HD_COVER_FILE_ENDINGS if self.isAuraHD() or self.isAuraH2O() else self.COVER_FILE_ENDINGS
+        return self.GLO_COVER_FILE_ENDINGS if self.isGlo() or self.isAura() \
+                else self.AURA_HD_COVER_FILE_ENDINGS if self.isAuraHD() or self.isAuraH2O() or self.isGloHD() \
+                else self.COVER_FILE_ENDINGS
 
     def set_device_name(self):
         device_name = self.gui_name
@@ -2802,10 +2819,14 @@ class KOBOTOUCH(KOBO):
             device_name = 'Kobo Aura H2O'
         elif self.isGlo():
             device_name = 'Kobo Glo'
+        elif self.isGloHD():
+            device_name = 'Kobo Glo HD'
         elif self.isMini():
             device_name = 'Kobo Mini'
         elif self.isTouch():
             device_name = 'Kobo Touch'
+        elif self.isTouch2():
+            device_name = 'Kobo Touch 2'
         self.__class__.gui_name = device_name
         return device_name
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -14,7 +14,7 @@ from functools import partial
 from PyQt5.Qt import (QPushButton, QFrame, QMenu, QInputDialog,
     QDialog, QVBoxLayout, QDialogButtonBox, QSize, QStackedWidget, QWidget,
     QLabel, Qt, pyqtSignal, QIcon, QTreeWidget, QGridLayout, QTreeWidgetItem,
-    QToolButton, QItemSelectionModel, QCursor, QKeySequence)
+    QToolButton, QItemSelectionModel, QCursor, QKeySequence, QSizePolicy)
 
 from calibre.ebooks.oeb.polish.container import get_container, AZW3Container
 from calibre.ebooks.oeb.polish.toc import (
@@ -29,8 +29,9 @@ ICON_SIZE = 24
 
 class XPathDialog(QDialog):  # {{{
 
-    def __init__(self, parent):
+    def __init__(self, parent, prefs):
         QDialog.__init__(self, parent)
+        self.prefs = prefs
         self.setWindowTitle(_('Create ToC from XPath'))
         self.l = l = QVBoxLayout()
         self.setLayout(l)
@@ -73,13 +74,14 @@ class XPathDialog(QDialog):  # {{{
         if ok:
             name = unicode(name).strip()
             if name:
-                saved = gprefs.get('xpath_toc_settings', {})
-                saved[name] = {i:x for i, x in enumerate(xpaths)}
-                gprefs.set('xpath_toc_settings', saved)
+                saved = self.prefs.get('xpath_toc_settings', {})
+                # in JSON all keys have to be strings
+                saved[name] = {str(i):x for i, x in enumerate(xpaths)}
+                self.prefs.set('xpath_toc_settings', saved)
                 self.setup_load_button()
 
     def setup_load_button(self):
-        saved = gprefs.get('xpath_toc_settings', {})
+        saved = self.prefs.get('xpath_toc_settings', {})
         m = self.load_menu
         m.clear()
         self.__actions = []
@@ -91,13 +93,13 @@ class XPathDialog(QDialog):  # {{{
         self.load_button.setEnabled(bool(saved))
 
     def clear_settings(self):
-        gprefs.set('xpath_toc_settings', {})
+        self.prefs.set('xpath_toc_settings', {})
         self.setup_load_button()
 
     def load_settings(self, name):
-        saved = gprefs.get('xpath_toc_settings', {}).get(name, {})
+        saved = self.prefs.get('xpath_toc_settings', {}).get(name, {})
         for i, w in enumerate(self.widgets):
-            txt = saved.get(i, '')
+            txt = saved.get(str(i), '')
             w.edit.setText(txt)
 
     def check(self):
@@ -129,8 +131,9 @@ class ItemView(QFrame):  # {{{
     create_from_files = pyqtSignal()
     flatten_toc = pyqtSignal()
 
-    def __init__(self, parent):
+    def __init__(self, parent, prefs):
         QFrame.__init__(self, parent)
+        self.prefs = prefs
         self.setFrameShape(QFrame.StyledPanel)
         self.setMinimumWidth(250)
         self.stack = s = QStackedWidget(self)
@@ -303,7 +306,7 @@ class ItemView(QFrame):  # {{{
         self.create_from_xpath.emit(['//h:h%d'%i for i in xrange(1, 7)])
 
     def create_from_user_xpath(self):
-        d = XPathDialog(self)
+        d = XPathDialog(self, self.prefs)
         if d.exec_() == d.Accepted and d.xpaths:
             self.create_from_xpath.emit(d.xpaths)
 
@@ -505,6 +508,11 @@ class TreeWidget(QTreeWidget):  # {{{
             t = unicode(item.data(0, Qt.DisplayRole) or '')
             item.setData(0, Qt.DisplayRole, titlecase(t))
 
+    def upper_case(self):
+        for item in self.selectedItems():
+            t = unicode(item.data(0, Qt.DisplayRole) or '')
+            item.setData(0, Qt.DisplayRole, icu_upper(t))
+
     def bulk_rename(self):
         from calibre.gui2.tweak_book.file_list import get_bulk_rename_settings
         sort_map = {item:i for i, item in enumerate(self.iteritems())}
@@ -556,6 +564,7 @@ class TreeWidget(QTreeWidget):  # {{{
                 m.addAction(QIcon(I('forward.png')), (_('Indent "%s"')%ci)+key(Qt.Key_Right), self.move_right)
             m.addAction(QIcon(I('edit_input.png')), _('Change the location this entry points to'), self.edit_item)
             m.addAction(_('Change all selected items to title case'), self.title_case)
+            m.addAction(_('Change all selected items to upper case'), self.upper_case)
             m.addAction(QIcon(I('modified.png')), _('Bulk rename all selected items'), self.bulk_rename)
             m.exec_(QCursor.pos())
 # }}}
@@ -564,8 +573,9 @@ class TOCView(QWidget):  # {{{
 
     add_new_item = pyqtSignal(object, object)
 
-    def __init__(self, parent):
+    def __init__(self, parent, prefs):
         QWidget.__init__(self, parent)
+        self.prefs = prefs
         l = self.l = QGridLayout()
         self.setLayout(l)
         self.tocw = t = TreeWidget(self)
@@ -614,8 +624,9 @@ class TOCView(QWidget):  # {{{
         l.addWidget(b, col, 1)
         self.default_msg = _('Double click on an entry to change the text')
         self.hl = hl = QLabel(self.default_msg)
+        hl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         l.addWidget(hl, col, 2, 1, -1)
-        self.item_view = i = ItemView(self)
+        self.item_view = i = ItemView(self, self.prefs)
         self.item_view.delete_item.connect(self.delete_current_item)
         i.add_new_item.connect(self.add_new_item)
         i.create_from_xpath.connect(self.create_from_xpath)
@@ -840,8 +851,9 @@ class TOCEditor(QDialog):  # {{{
     explode_done = pyqtSignal(object)
     writing_done = pyqtSignal(object)
 
-    def __init__(self, pathtobook, title=None, parent=None):
+    def __init__(self, pathtobook, title=None, parent=None, prefs=None):
         QDialog.__init__(self, parent)
+        self.prefs = prefs or gprefs
         self.pathtobook = pathtobook
         self.working = True
 
@@ -867,7 +879,7 @@ class TOCEditor(QDialog):  # {{{
         la.setWordWrap(True)
         la.setStyleSheet('QLabel { font-size: 20pt }')
         ll.addWidget(la, alignment=Qt.AlignHCenter|Qt.AlignTop)
-        self.toc_view = TOCView(self)
+        self.toc_view = TOCView(self, self.prefs)
         self.toc_view.add_new_item.connect(self.add_new_item)
         s.addWidget(self.toc_view)
         self.item_edit = ItemEdit(self)
@@ -882,7 +894,7 @@ class TOCEditor(QDialog):  # {{{
         self.writing_done.connect(self.really_accept, type=Qt.QueuedConnection)
 
         self.resize(950, 630)
-        geom = gprefs.get('toc_editor_window_geom', None)
+        geom = self.prefs.get('toc_editor_window_geom', None)
         if geom is not None:
             self.restoreGeometry(bytes(geom))
 
@@ -893,7 +905,7 @@ class TOCEditor(QDialog):  # {{{
     def accept(self):
         if self.stacks.currentIndex() == 2:
             self.toc_view.update_item(*self.item_edit.result)
-            gprefs['toc_edit_splitter_state'] = bytearray(self.item_edit.splitter.saveState())
+            self.prefs['toc_edit_splitter_state'] = bytearray(self.item_edit.splitter.saveState())
             self.stacks.setCurrentIndex(1)
         elif self.stacks.currentIndex() == 1:
             self.working = False
@@ -905,12 +917,12 @@ class TOCEditor(QDialog):  # {{{
             self.bb.setEnabled(False)
 
     def really_accept(self, tb):
-        gprefs['toc_editor_window_geom'] = bytearray(self.saveGeometry())
+        self.prefs['toc_editor_window_geom'] = bytearray(self.saveGeometry())
         if tb:
             error_dialog(self, _('Failed to write book'),
                 _('Could not write %s. Click "Show details" for'
                   ' more information.')%self.book_title, det_msg=tb, show=True)
-            gprefs['toc_editor_window_geom'] = bytearray(self.saveGeometry())
+            self.prefs['toc_editor_window_geom'] = bytearray(self.saveGeometry())
             super(TOCEditor, self).reject()
             return
 
@@ -920,11 +932,11 @@ class TOCEditor(QDialog):  # {{{
         if not self.bb.isEnabled():
             return
         if self.stacks.currentIndex() == 2:
-            gprefs['toc_edit_splitter_state'] = bytearray(self.item_edit.splitter.saveState())
+            self.prefs['toc_edit_splitter_state'] = bytearray(self.item_edit.splitter.saveState())
             self.stacks.setCurrentIndex(1)
         else:
             self.working = False
-            gprefs['toc_editor_window_geom'] = bytearray(self.saveGeometry())
+            self.prefs['toc_editor_window_geom'] = bytearray(self.saveGeometry())
             super(TOCEditor, self).reject()
 
     def start(self):

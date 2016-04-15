@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -420,12 +420,6 @@ def parse_html(data, log=None, decoder=None, preprocessor=None,
     r = [x for x in data.iterdescendants(etree.Element) if 'microsoft-com' in x.tag]
     for x in r:
         x.tag = XHTML('span')
-
-    # Remove lang redefinition inserted by the amazing Microsoft Word!
-    body = xpath(data, '/h:html/h:body')[0]
-    for key in list(body.attrib.keys()):
-        if key == 'lang' or key.endswith('}lang'):
-            body.attrib.pop(key)
 
     def remove_elem(a):
         p = a.getparent()

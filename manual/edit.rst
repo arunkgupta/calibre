@@ -1,6 +1,6 @@
 .. _edit:
 
-Editing E-books 
+Editing E-books
 ========================
 
 calibre has an integrated e-book editor that can be used to edit books in the
@@ -40,12 +40,12 @@ Tutorial <http://html.net/tutorials/html/>`_ and `CSS Tutorial
 As you make changes to the HTML or CSS in the editor, the changes will be
 previewed, live, in the preview panel to the right. When you are happy with how
 the changes you have made look, click the Save button or use
-:guilabel:`File->Save` to save your changes into the ebook. 
+:guilabel:`File->Save` to save your changes into the ebook.
 
 One useful feature is :guilabel:`Checkpoints`. Before you embark on some
 ambitious set of edits, you can create a checkpoint. The checkpoint
 will preserve the current state of your book, then if in the future you decide
-you dont like the changes you have made to you can go back to the state when
+you don't like the changes you have made to you can go back to the state when
 you created the checkpoint. To create a checkpoint, use :guilabel:`Edit->Create
 checkpoint`. Checkpoints will also be automatically created for you whenever you
 run any automated tool like global search and replace. The checkpointing
@@ -155,13 +155,13 @@ from the OPF file, saving you that chore. However, references in other places
 are not removed, you can use the Check Book tool to easily find and
 remove/replace them.
 
-Export of files
+Exporting files
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
 You can export a file from inside the book to somewhere else on your computer.
 This is useful if you want to work on the file in isolation, with specialised
 tools. To do this, simply right click on the file and choose
-:guilabel:`Export`. 
+:guilabel:`Export`.
 
 Once you are done working on the exported file, you can re-import it into the
 book, by right clicking on the file again and choosing :guilabel:`Replace with
@@ -195,7 +195,7 @@ right click and choose Link stylesheets to have calibre automatically insert the
 <link> tags for those stylesheets into all the selected HTML files.
 
 .. raw:: html epub
-    
+
     <div style="clear:both"></div>
 
 
@@ -213,16 +213,16 @@ searching, see :ref:`regexptutorial`.
     :align: center
 
 Start the search and replace via the :guilabel:`Search->Find/replace` menu
-entry (you must be editing an HTML or CSS file).  
+entry (you must be editing an HTML or CSS file).
 
 Type the text you want to find into the Find box and its replacement into the
 Replace box. You can the click the appropriate buttons to Find the next match,
-replace the current match and replace all matches. 
+replace the current match and replace all matches.
 
 Using the drop downs at the bottom of the box, you can have the search operate
 over the current file, all text files, all style files or all files. You can
 also choose the search mode to be a normal (string) search or a regular
-expression search. 
+expression search.
 
 You can count all the matches for a search expression via
 :guilabel:`Search->Count all`. The count will run over whatever files/regions
@@ -231,7 +231,7 @@ you have selected in the dropdown box.
 You can also go to a specific line in the currently open editor via
 :guilabel:`Search->Go to line`.
 
-.. note:: 
+.. note::
     Remember, to harness the full power of search and replace, you will
     need to use regular expressions. See :ref:`regexptutorial`.
 
@@ -260,11 +260,11 @@ Automated tools
 Edit book has various tools to help with common tasks. These are
 accessed via the :guilabel:`Tools` menu.
 
-Edit the Table of Contents
+Editing the Table of Contents
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 There is a dedicated tool to ease editing of the Table of Contents. Launch it
-with :guilabel:`Tools->Table of Contents->Edit Table of Contents`. 
+with :guilabel:`Tools->Table of Contents->Edit Table of Contents`.
 
 .. image:: images/tocedit.png
     :alt: The Edit Table of Contents tool
@@ -277,20 +277,20 @@ also re-arrange entries by drag and drop or by using the buttons to the right.
 For books that do not have a pre-existing Table of Contents, the tool gives you
 various options to auto-generate a Table of Contents from the text. You can
 generate from the headings in the document, from links, from individual files
-and so on. 
+and so on.
 
 You can edit individual entries by clicking on them and then clicking the
 :guilabel:`Change the location this entry points to` button. This will open up
 a mini-preview of the book, simply move the mouse cursor over the book view
 panel, and click where you want the entry to point to. A thick green line
-will show you the location. Click OK once you are happy with the location. 
+will show you the location. Click OK once you are happy with the location.
 
 .. image:: images/tocedit-location.png
     :alt: The Edit Table of Contents tool, how to change the location an entry points to
     :align: center
 
-Check Book
-^^^^^^^^^^^^^
+Checking the Book
+^^^^^^^^^^^^^^^^^^^^^
 
 The :guilabel:`Check Book` tool searches your book for problems that could
 prevent it working as intended on actual reader devices. Activate it via
@@ -336,8 +336,8 @@ Some of the checks performed are:
     * Various compatibility checks for known problems that can cause the book
       to malfunction on reader devices.
 
-Add a cover
-^^^^^^^^^^^^
+Adding a cover
+^^^^^^^^^^^^^^^
 
 You can easily add a cover to the book via :guilabel:`Tools->Add cover`. This
 allows you to either choose an existing image in the book as the cover or
@@ -375,16 +375,31 @@ Note that the algorithm can sometimes generate incorrect results, especially
 when single quotes at the start of contractions are involved. Accessed via
 :guilabel:`Tools->Smarten punctuation`.
 
+Transforming CSS properties
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Create rules to transform the styling of the book. For example, create a rule
+to convert all red text to green or to double the font size of all text in the
+book or make text of a certain font family italic, etc.
+
+Creating the rules is simple, the rules follow a natural language format, that
+looks like:
+
+ * If the property *color* is *red* *change* it to *green*
+ * If the property *font-size* is *any value* *multiply* the value by *2*
+
+Accessed via :guilabel:`Tools->Transform styles`.
+
 Removing unused CSS rules
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Remove all unused CSS rules from stylesheets and <style> tags. Some books
 created from production templates can have a large number of extra CSS rules
-that dont match any actual content. These extra rules can slow down readers
+that don't match any actual content. These extra rules can slow down readers
 that need to process them all. Accessed via :guilabel:`Tools->Remove unused CSS`.
 
 
-Fix HTML
+Fixing HTML
 ^^^^^^^^^^^
 
 This tool simply converts HTML that cannot be parsed as XML into well-formed
@@ -402,7 +417,7 @@ Beautifying files
 This tool is used to auto-format all HTML and CSS files so that they "look
 pretty". The code is auto-indented so that it lines up nicely, blank lines are
 inserted where appropriate and so on. Note that beautifying also auto-fixes
-broken HTML/CSS. Therefore, if you dont want any auto-fixing to be performed,
+broken HTML/CSS. Therefore, if you don't want any auto-fixing to be performed,
 first use the Check Book tool to correct all problems and only then run
 beautify.  Accessed via :guilabel:`Tools->Beautify all files`.
 
@@ -419,20 +434,20 @@ beautify.  Accessed via :guilabel:`Tools->Beautify all files`.
     for example: `HTML Tidy <http://infohound.net/tidy/>`_.
 
 
-Insert inline Table of Contents
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Inserting an inline Table of Contents
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Normally in ebooks, the Table of Contents is separate from the main text and is
 typically accessed via a special Table of Contents button/menu in the ebook
 reading device. You can also have calibre automatically generate an *inline*
 Table of Contents that becomes part of the text of the book. It is
-generated based on the currently defined Table of Contents. 
+generated based on the currently defined Table of Contents.
 
 If you use this tool multiple times, each invocation will cause the previously
 created inline Table of Contents to be replaced. The tool can be accessed via
 :guilabel:`Tools->Table of Contents->Insert inline Table of Contents`.
 
-Set Semantics
+Setting Semantics
 ^^^^^^^^^^^^^^^^^
 
 This tool is used to set *semantics* in EPUB files. Semantics are simply,
@@ -442,7 +457,7 @@ table of contents, etc. Simply choose the type of semantic information you want
 to specify and then select the location in the book the link should point to.
 This tool can be accessed via :guilabel:`Tools->Set semantics`.
 
-Filter style information
+Filtering style information
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 This tool can be used to easily remove specified CSS style properties from the
@@ -459,7 +474,7 @@ Checkpoints
 ------------------------
 
 :guilabel:`Checkpoints` are a way to mark the current state of the book as "special". You
-can then go on to do whatever changes you want to the book and if you dont like
+can then go on to do whatever changes you want to the book and if you don't like
 the results, return to the checkpointed state. Checkpoints are automatically
 created every time you run any of the automated tools described in the
 previous section.
@@ -467,7 +482,7 @@ previous section.
 You can create a checkpoint via :guilabel:`Edit->Create checkpoint`. And go back
 to a previous checkpoint with :guilabel:`Edit->Revert to ...`
 
-The checkpointing functionality is in addition to the normal Undo/redo
+The check pointing functionality is in addition to the normal Undo/redo
 mechanism when editing individual files. Checkpoints are particularly useful
 for when changes are spread over multiple files in the book or when you wish to
 be able to revert a large group of related changes as a whole.
@@ -525,11 +540,11 @@ While viewing the file you want to split, click the :guilabel:`split mode`
 button under the preview panel |spmb|. Then simply move your mouse to the place
 where you want to split the file and click. A thick green line will show you
 exactly where the split will happen as you move your mouse. Once you have found
-the location you want, simply click and the split will be performed. 
+the location you want, simply click and the split will be performed.
 
 Splitting the file will automatically update all links and references that
 pointed into the bottom half of the file and will open the newly split file in
-an editor. 
+an editor.
 
 You can also split a single HTML file at multiple locations automatically, by
 right clicking inside the file in the editor and choosing :guilabel:`Split at
@@ -537,7 +552,7 @@ multiple locations`. This will allow you to easily split a large file at all
 heading tags or all tags having a certain class and so on.
 
 .. raw:: html epub
-    
+
     <div style="clear:both"></div>
 
 The Live CSS panel
@@ -565,13 +580,13 @@ with a line through them.
 You can enable the Live CSS panel via :guilabel:`View->Live CSS`.
 
 .. raw:: html epub
-    
+
     <div style="clear:both"></div>
 
 Miscellaneous Tools
 ----------------------
 
-There are a few more tools that can be useful while you edit the book. 
+There are a few more tools that can be useful while you edit the book.
 
 The Table of Contents View
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -579,13 +594,13 @@ The Table of Contents View
 The Table of Contents view shows you the current table of contents in the book.
 Double clicking on any entry opens the place that entry points to in an editor.
 You can right click to edit the Table of Contents, refresh the view or
-expand/collapse all items. Access this view via :guilabel:`Views->Table of
+expand/collapse all items. Access this view via :guilabel:`View->Table of
 Contents`.
 
 Checking the spelling of words in the book
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-You can run a spelling checker via :guilabel:`Tools->Check spelling`. 
+You can run a spelling checker via :guilabel:`Tools->Check spelling`.
 
 .. image:: images/edit-book-spell.png
     :alt: The Check Spelling tool
@@ -634,9 +649,9 @@ Adding new dictionaries
 The spelling checker comes with builtin dictionaries for the English and
 Spanish languages. You can install your own dictionaries via
 :guilabel:`Preferences->Editor->Manage spelling dictionaries`. The spell
-checker can use dictionaries from the OpenOffice program (in the .oxt
+checker can use dictionaries from the LibreOffice program (in the .oxt
 format). You can download these dictionaries from
-`The OpenOffice Extensions repository <http://extensions.openoffice.org/>`_.
+`The LibreOffice Extensions repository <http://extensions.libreoffice.org/extension-center?getCategories=Dictionary&getCompatibility=any&sort_on=positive_ratings>`_.
 
 
 Inserting special characters
@@ -681,7 +696,15 @@ Note that editing the styles does not actually make changes to the book
 contents, it only allows for quick experimentation. The ability to live edit
 inside the Inspector is under development.
 
-Arrange files into folders by type
+Checking external links
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+You can use this tool to check all links in your book that point to external
+websites. The tool will try to visit every externally linked website, and
+if the visit fails, it will report all broken links in a convenient format for 
+you to fix.
+
+Arranging files into folders by type
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Often when editing EPUB files that you get from somewhere, you will find that
@@ -704,3 +727,89 @@ a new book`.
     :hidden:
 
     function_mode
+    snippets
+
+The Reports tool
+^^^^^^^^^^^^^^^^^^^^^
+
+The editor includes a nice *Reports* tool (via :guilabel:`Tools->Reports`) that
+shows summaries of the files, images, links, words, characters and styles used
+in the book. Every line in the report is hot-linked. Double clicking a line
+jumps to the place in the book where that item is used or defined (as
+appropriate). For example, in the :guilabel:`Links` view, you can double click
+entries the :guilabel:`Source` column to jump to where the link is defined and
+entries in the :guilabel:`Target` column to jump to where the link points.
+
+.. image:: images/reports-ss.png
+    :alt: The Reports tool
+    :align: center
+    :class: fit-img
+
+
+Special features in the code editor
+---------------------------------------
+
+The calibre HTML editor is very powerful. It has many features that make
+editing of HTML (and CSS) easier.
+
+Syntax highlighting
+^^^^^^^^^^^^^^^^^^^^^
+
+The HTML editor has very sophisticated syntax highlighting. Features include:
+
+    * The text inside bold, italic and heading tags is made bold/italic
+    * As you move your cursor through the HTML, the matching HTML tags are
+      highlighted
+    * Invalid HTML is highlighted with a red underline
+    * Spelling errors in the text inside HTML tags and attributes such as title
+      are highlighted. The spell checking is language aware, based on the value
+      of the lang attribute of the current tag and the overall book language.
+    * CSS embedded inside ``<style>`` tags is highlighted
+    * Special characters that can be hard to distinguish such as non-breaking
+      spaces, different types of hyphens, etc. are highlighted.
+    * Links to other files in ``<a>`` tags, ``<img>`` and ``<link>`` tags all
+      have the filenames highlighted. If the filename they point to does not
+      exist, the filename is marked with a red underline.
+
+Context sensitive help
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+You can right click on an HTML tag name or a CSS property name to get help for that tag or property.
+
+You can also hold down the Ctrl key and click on any filename inside a link tag
+to open that file in the editor automatically.
+
+.. _editor_auto_complete:
+
+Auto-complete
+^^^^^^^^^^^^^^^^
+
+When editing an ebook, one of the most tedious tasks is creating links to other
+files inside the book, or to CSS stylesheets, or images. You have to figure out
+the correct filename and relative path to the file. The editor has
+auto-complete to make that easier.
+
+As you type a filename, the editor automatically pops up suggestions. Simply
+use the Tab key to select the correct file name. The editor even offers
+suggestions for links pointing to an anchor inside another HTML file. After you
+type the ``#`` character, the editor will show you a list of all anchors in the
+target file, with a small snippet of text to help you choose the right anchor.
+
+Note that unlike most other completion systems, the editor's completion system
+uses subsequence matching. This means that you can type just two or three
+letters from anywhere in the filename to complete the filename. For example,
+say you want the filename ``../images/arrow1.png``, you can simply type ``ia1``
+and press Tab to complete the filename. When searching for matches, the
+completion system prioritizes letters that are at the start of a word, or
+immediately after a path separator. Once you get used to this system, you will
+find it saves you a lot of time and effort.
+
+Snippets
+^^^^^^^^^^^^^^^
+
+The calibre editor supports *snippets*. A snippet is a
+piece of text that is either re-used often or contains a lot of redundant
+text. The editor allows you to insert a snippet with only a few key strokes.
+The snippets are very powerful, with many features, such as placeholders you
+can jump between, automatic mirroring of repeated text and so on.
+For more information, see :doc:`snippets`.

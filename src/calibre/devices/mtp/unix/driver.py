@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -367,7 +367,7 @@ class MTP_DEVICE(MTPDeviceBase):
         ename = name.encode('utf-8') if isinstance(name, unicode) else name
         sid, pid = parent.storage_id, parent.object_id
         if pid == sid:
-            pid = 0
+            pid = 0xFFFFFFFF
 
         ans, errs = self.dev.put_file(sid, pid, ename, stream, size, callback)
         if ans is None:

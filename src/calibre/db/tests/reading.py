@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -265,7 +265,7 @@ class ReadingTest(BaseTest):
         old = LibraryDatabase2(self.library_path)
         oldvals = {query:set(old.search_getting_ids(query, '')) for query in (
             # Date tests
-            'date:9/6/2011', 'date:true', 'date:false', 'pubdate:9/2011',
+            'date:9/6/2011', 'date:true', 'date:false', 'pubdate:1/9/2011',
             '#date:true', 'date:<100daysago', 'date:>9/6/2011',
             '#date:>9/1/2011', '#date:=2011',
 
@@ -290,7 +290,7 @@ class ReadingTest(BaseTest):
             'title:="Title One"', 'title:~title', '#enum:=one', '#enum:tw',
             '#enum:false', '#enum:true', 'series:one', 'tags:one', 'tags:true',
             'tags:false', 'uuid:2', 'one', '20.02', '"publisher one"',
-            '"my comments one"',
+            '"my comments one"', 'series_sort:one',
 
             # User categories
             '@Good Authors:One', '@Good Series.good tags:two',
@@ -305,7 +305,7 @@ class ReadingTest(BaseTest):
         old.conn.close()
         old = None
 
-        cache = self.init_cache(self.library_path)
+        cache = self.init_cache(self.cloned_library)
         for query, ans in oldvals.iteritems():
             nr = cache.search(query, '')
             self.assertEqual(ans, nr,
@@ -315,6 +315,18 @@ class ReadingTest(BaseTest):
         # Test searching by id, which was introduced in the new backend
         self.assertEqual(cache.search('id:1', ''), {1})
         self.assertEqual(cache.search('id:>1', ''), {2, 3})
+
+        # Numeric/rating searches with relops in the old db were incorrect, so
+        # test them specifically here
+        cache.set_field('rating', {1:4, 2:2, 3:5})
+        self.assertEqual(cache.search('rating:>2'), set())
+        self.assertEqual(cache.search('rating:>=2'), {1, 3})
+        self.assertEqual(cache.search('rating:<2'), {2})
+        self.assertEqual(cache.search('rating:<=2'), {1, 2, 3})
+        self.assertEqual(cache.search('rating:<=2'), {1, 2, 3})
+        self.assertEqual(cache.search('rating:=2'), {1, 3})
+        self.assertEqual(cache.search('rating:2'), {1, 3})
+        self.assertEqual(cache.search('rating:!=2'), {2})
 
         # Note that the old db searched uuid for un-prefixed searches, the new
         # db does not, for performance
@@ -336,7 +348,7 @@ class ReadingTest(BaseTest):
             for attr in ('name', 'original_name', 'id', 'count',
                          'is_hierarchical', 'is_editable', 'is_searchable',
                          'id_set', 'avg_rating', 'sort', 'use_sort_as_name',
-                         'tooltip', 'icon', 'category'):
+                         'category'):
                 oval, nval = getattr(old, attr), getattr(new, attr)
                 if (
                     (category in {'rating', '#rating'} and attr in {'id_set', 'sort'}) or

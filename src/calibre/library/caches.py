@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement
 
@@ -703,7 +703,7 @@ class ResultCache(SearchQueryParser):  # {{{
                         query[1:1] in '=<>!':
                     vf = lambda item, loc=fm['rec_index'], \
                                 ms=fm['is_multiple']['cache_to_list']:\
-                            len(item[loc].split(ms)) if item[loc] is not None else 0
+                                len(item[loc].split(ms)) if item[loc] is not None else 0
                     return self.get_numeric_matches(location, query[1:],
                                                     candidates, val_func=vf)
 

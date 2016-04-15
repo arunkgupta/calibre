@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -63,7 +63,7 @@ class AddAction(InterfaceAction):
             'file is the same book in a different format)')).triggered.connect(
             self.add_recursive_single)
         ma('recursive-multiple', _('Add books from directories, including '
-            'sub directories (Multiple books per directory, assumes every '
+            'sub-directories (Multiple books per directory, assumes every '
             'ebook file is a different book)')).triggered.connect(
                     self.add_recursive_multiple)
         arm = self.add_archive_menu = self.add_menu.addMenu(_('Add multiple books from archive (ZIP/RAR)'))
@@ -72,13 +72,18 @@ class AddAction(InterfaceAction):
         self.create_menu_action(arm, 'recursive-multiple-archive', _(
             'Multiple books per directory in the archive')).triggered.connect(partial(self.add_archive, False))
         self.add_menu.addSeparator()
-        self.add_menu.addSeparator()
         ma('add-empty', _('Add Empty book. (Book entry with no formats)'),
                 shortcut='Shift+Ctrl+E').triggered.connect(self.add_empty)
         ma('add-isbn', _('Add from ISBN')).triggered.connect(self.add_from_isbn)
         self.add_menu.addSeparator()
         ma('add-formats', _('Add files to selected book records'),
                 triggered=self.add_formats, shortcut='Shift+A')
+        arm = self.add_archive_menu = self.add_menu.addMenu(_('Add an empty file to selected book records'))
+        from calibre.ebooks.oeb.polish.create import valid_empty_formats
+        for fmt in sorted(valid_empty_formats):
+            self.create_menu_action(arm, 'add-empty-' + fmt,
+                                    _('Add empty {}').format(fmt.upper())).triggered.connect(
+                                         partial(self.add_empty_format, fmt))
         self.add_menu.addSeparator()
         ma('add-config', _('Control the adding of books'),
                 triggered=self.add_config)
@@ -143,6 +148,54 @@ class AddAction(InterfaceAction):
         if current_idx.isValid():
             view.model().current_changed(current_idx, current_idx)
 
+    def add_empty_format(self, format_):
+        if self.gui.stack.currentIndex() != 0:
+            return
+        view = self.gui.library_view
+        rows = view.selectionModel().selectedRows()
+        if not rows:
+            return error_dialog(self.gui, _('No books selected'),
+                    _('Cannot add files as no books are selected'), show=True)
+
+        ids = [view.model().id(r) for r in rows]
+
+        if len(ids) > 1 and not question_dialog(
+                self.gui,
+                _('Are you sure?'),
+                _('Are you sure you want to add the same'
+                  ' empty file to all %d books? If the format'
+                  ' already exists for a book, it will be replaced.')%len(ids)):
+            return
+
+        db = self.gui.library_view.model().db
+        if len(ids) == 1:
+            formats = db.formats(ids[0], index_is_id=True)
+            if formats:
+                formats = {x.lower() for x in formats.split(',')}
+                if format_ in formats:
+                    title = db.title(ids[0], index_is_id=True)
+                    msg = _('The {0} format will be replaced in the book {1}. Are you sure?').format(
+                        format_, title)
+                    if not confirm(msg, 'confirm_format_override_on_add', title=_('Are you sure?'),
+                                   parent=self.gui):
+                        return
+
+        for id_ in ids:
+            from calibre.ebooks.oeb.polish.create import create_book
+            pt = PersistentTemporaryFile(suffix='.' + format_)
+            pt.close()
+            try:
+                mi = db.new_api.get_metadata(id_, get_cover=False,
+                                    get_user_categories=False, cover_as_data=False)
+                create_book(mi, pt.name, fmt=format_)
+                db.add_format_with_hooks(id_, format_, pt.name, index_is_id=True, notify=True)
+            finally:
+                os.remove(pt.name)
+
+        current_idx = self.gui.library_view.currentIndex()
+        if current_idx.isValid():
+            view.model().current_changed(current_idx, current_idx)
+
     def add_archive(self, single):
         paths = choose_files(
             self.gui, 'recursive-archive-add', _('Choose archive file'),
@@ -185,7 +238,7 @@ class AddAction(InterfaceAction):
         Add an empty book item to the library. This does not import any formats
         from a book file.
         '''
-        author = series = None
+        author = series = title = None
         index = self.gui.library_view.currentIndex()
         if index.isValid():
             raw = index.model().db.authors(index.row())
@@ -194,31 +247,45 @@ class AddAction(InterfaceAction):
                 if authors:
                     author = authors[0]
             series = index.model().db.series(index.row())
+            title = index.model().db.title(index.row())
         dlg = AddEmptyBookDialog(self.gui, self.gui.library_view.model().db,
-                                 author, series)
+                                 author, series, dup_title=title)
         if dlg.exec_() == dlg.Accepted:
             temp_files = []
             num = dlg.qty_to_add
             series = dlg.selected_series
+            title = dlg.selected_title or _('Unknown')
             db = self.gui.library_view.model().db
-            ids = []
+            ids, orig_fmts = [], []
+            if dlg.duplicate_current_book:
+                origmi = db.get_metadata(index.row(), get_cover=True, cover_as_data=True)
+                if dlg.copy_formats.isChecked():
+                    book_id = db.id(index.row())
+                    orig_fmts = tuple(db.new_api.format(book_id, fmt, as_path=True) for fmt in db.new_api.formats(book_id))
+
             for x in xrange(num):
-                mi = MetaInformation(_('Unknown'), dlg.selected_authors)
-                if series:
-                    mi.series = series
-                    mi.series_index = db.get_next_series_num_for(series)
+                if dlg.duplicate_current_book:
+                    mi = origmi
+                else:
+                    mi = MetaInformation(title, dlg.selected_authors)
+                    if series:
+                        mi.series = series
+                        mi.series_index = db.get_next_series_num_for(series)
                 fmts = []
-                if gprefs.get('create_empty_epub_file', False):
+                empty_format = gprefs.get('create_empty_format_file', '')
+                if dlg.duplicate_current_book and dlg.copy_formats.isChecked():
+                    fmts = orig_fmts
+                elif empty_format:
                     from calibre.ebooks.oeb.polish.create import create_book
-                    pt = PersistentTemporaryFile(suffix='.epub')
+                    pt = PersistentTemporaryFile(suffix='.' + empty_format)
                     pt.close()
                     temp_files.append(pt.name)
-                    create_book(mi, pt.name)
+                    create_book(mi, pt.name, fmt=empty_format)
                     fmts = [pt.name]
                 ids.append(db.import_book(mi, fmts))
+            tuple(map(os.remove, orig_fmts))
             self.gui.library_view.model().books_added(num)
-            if hasattr(self.gui, 'db_images'):
-                self.gui.db_images.beginResetModel(), self.gui.db_images.endResetModel()
+            self.gui.refresh_cover_browser()
             self.gui.tags_view.recount()
             if ids:
                 ids.reverse()
@@ -303,7 +370,7 @@ class AddAction(InterfaceAction):
                     accept = True
                     db.set_cover(cid, pmap)
                     cover_changed = True
-            elif ext in BOOK_EXTENSIONS:
+            else:
                 formats.append((ext, path))
                 accept = True
         if accept and event is not None:
@@ -319,8 +386,7 @@ class AddAction(InterfaceAction):
         if current_idx.isValid():
             self.gui.library_view.model().current_changed(current_idx, current_idx)
         if cover_changed:
-            if self.gui.cover_flow:
-                self.gui.cover_flow.dataChanged()
+            self.gui.refresh_cover_browser()
 
     def __add_filesystem_book(self, paths, allow_device=True):
         if isinstance(paths, basestring):
@@ -385,8 +451,7 @@ class AddAction(InterfaceAction):
         if adder.number_of_books_added > 0:
             self.gui.library_view.model().books_added(adder.number_of_books_added)
             self.gui.library_view.set_current_row(0)
-            if hasattr(self.gui, 'db_images'):
-                self.gui.db_images.beginResetModel(), self.gui.db_images.endResetModel()
+            self.gui.refresh_cover_browser()
             self.gui.tags_view.recount()
 
         if adder.merged_books:
@@ -442,10 +507,10 @@ class AddAction(InterfaceAction):
         remove = set([p for p in paths if ext(p) in ve])
         if remove:
             paths = [p for p in paths if p not in remove]
-            info_dialog(self.gui,  _('Not Implemented'),
-                        _('The following books are virtual and cannot be added'
-                          ' to the calibre library:'), '\n'.join(remove),
-                        show=True)
+            vmsg = getattr(self.gui.device_manager.device, 'VIRTUAL_BOOK_EXTENSION_MESSAGE', None) or _(
+                'The following books are virtual and cannot be added'
+                ' to the calibre library:')
+            info_dialog(self.gui,  _('Not Implemented'), vmsg, '\n'.join(remove), show=True)
             if not paths:
                 return
         if not paths or len(paths) == 0:

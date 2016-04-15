@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement
 
@@ -10,12 +10,13 @@ import textwrap, os, shlex, subprocess, glob, shutil, re, sys
 from distutils import sysconfig
 
 from setup import Command, islinux, isbsd, isosx, SRC, iswindows, __version__
-from setup.build_environment import (chmlib_inc_dirs,
-        podofo_inc, podofo_lib, podofo_error, pyqt, NMAKE, QMAKE,
-        msvc, win_inc, win_lib, magick_inc_dirs, magick_lib_dirs,
-        magick_libs, chmlib_lib_dirs, sqlite_inc_dirs, icu_inc_dirs,
-        icu_lib_dirs, ft_libs, ft_lib_dirs, ft_inc_dirs, cpu_count,
-        zlib_libs, zlib_lib_dirs, zlib_inc_dirs, is64bit, glib_flags, fontconfig_flags)
+from setup.build_environment import (
+    chmlib_inc_dirs, podofo_inc, podofo_lib, podofo_error, pyqt, NMAKE, QMAKE,
+    msvc, win_inc, win_lib, magick_inc_dirs, magick_lib_dirs, magick_libs,
+    chmlib_lib_dirs, sqlite_inc_dirs, icu_inc_dirs, icu_lib_dirs, ft_libs,
+    ft_lib_dirs, ft_inc_dirs, cpu_count, is64bit, glib_flags, fontconfig_flags,
+    openssl_inc_dirs, openssl_lib_dirs, zlib_inc_dirs, zlib_lib_dirs, zlib_libs,
+    qmakespec)
 from setup.parallel_build import create_job, parallel_build
 isunix = islinux or isosx or isbsd
 
@@ -66,6 +67,18 @@ if iswindows:
 
 extensions = [
 
+    Extension('lzma_binding',
+              glob.glob(os.path.join(SRC, 'lzma', '*.c')),
+              headers=glob.glob(os.path.join(SRC, 'lzma', '*.h')),
+              cflags=[('/' if iswindows else '-') + 'D' + x for x in ('_7ZIP_ST',)],
+              ),
+
+    Extension('dukpy',
+              ['duktape/%s.c' % x for x in 'errors context conversions proxy module duktape/duktape'.split()],
+              headers=['duktape/dukpy.h', 'duktape/duktape/duk_config.h', 'duktape/duktape/duktape.h'],
+              optimize_level=2,
+              ),
+
     Extension('hunspell',
               ['hunspell/'+x for x in
                 'affentry.cxx affixmgr.cxx csutil.cxx dictmgr.cxx filemgr.cxx hashmgr.cxx hunspell.cxx phonet.cxx replist.cxx suggestmgr.cxx'.split()
@@ -81,9 +94,25 @@ extensions = [
               optimize_level=2,
               ),
 
+    Extension('monotonic',
+        ['calibre/utils/monotonic.c'],
+        ),
+
     Extension('speedup',
         ['calibre/utils/speedup.c'],
         libraries=[] if iswindows else ['m']
+        ),
+
+    Extension('zlib2',
+        ['calibre/utils/zlib2.c'],
+        inc_dirs=zlib_inc_dirs,
+        libraries=zlib_libs, lib_dirs=zlib_lib_dirs
+        ),
+
+    Extension('certgen',
+        ['calibre/utils/certgen.c'],
+        libraries=['libeay32'] if iswindows else ['crypto'],
+        inc_dirs=openssl_inc_dirs, lib_dirs=openssl_lib_dirs,
         ),
 
     Extension('html',
@@ -155,18 +184,6 @@ extensions = [
         inc_dirs=ft_inc_dirs,
         libraries=ft_libs,
         lib_dirs=ft_lib_dirs),
-
-    Extension('woff',
-        ['calibre/utils/fonts/woff/main.c',
-         'calibre/utils/fonts/woff/woff.c'],
-        headers=[
-        'calibre/utils/fonts/woff/woff.h',
-        'calibre/utils/fonts/woff/woff-private.h'],
-        libraries=zlib_libs,
-        lib_dirs=zlib_lib_dirs,
-        inc_dirs=zlib_inc_dirs,
-        ),
-
 
     Extension('msdes',
                 ['calibre/utils/msdes/msdesmodule.c',
@@ -255,7 +272,7 @@ if iswindows:
     extensions.extend([
         Extension('winutil',
                 ['calibre/utils/windows/winutil.c'],
-                libraries=['shell32', 'setupapi', 'wininet'],
+                libraries=['shell32', 'wininet'],
                 cflags=['/X']
                 ),
         Extension('wpd',
@@ -492,20 +509,31 @@ class Build(Command):
     def build_headless(self):
         if iswindows or isosx:
             return  # Dont have headless operation on these platforms
+        from PyQt5.QtCore import QT_VERSION
         self.info('\n####### Building headless QPA plugin', '#'*7)
         a = Extension.absolutize
-        headers = a(['calibre/headless/headless_backingstore.h', 'calibre/headless/headless_integration.h'])
-        sources = a(['calibre/headless/main.cpp', 'calibre/headless/headless_backingstore.cpp', 'calibre/headless/headless_integration.cpp'])
+        headers = a([
+            'calibre/headless/headless_backingstore.h',
+            'calibre/headless/headless_integration.h',
+        ])
+        sources = a([
+            'calibre/headless/main.cpp',
+            'calibre/headless/headless_backingstore.cpp',
+            'calibre/headless/headless_integration.cpp',
+        ])
+        if QT_VERSION >= 0x50401:
+            headers.extend(a(['calibre/headless/fontconfig_database.h']))
+            sources.extend(a(['calibre/headless/fontconfig_database.cpp']))
         others = a(['calibre/headless/headless.json'])
         target = self.dest('headless')
         if not self.newer(target, headers + sources + others):
             return
-        # Arch monkey patches qmake as a result of which it fails to add
-        # glib-2.0 and freetype2 to the list of library dependencies. Compiling QPA
-        # plugins uses the static libQt5PlatformSupport.a which needs glib
-        # to be specified after it for linking to succeed, so we add it to
-        # QMAKE_LIBS_PRIVATE (we cannot use LIBS as that would put -lglib-2.0
-        # before libQt5PlatformSupport. See
+        # Arch and possibly other distros (fedora?) monkey patches qmake as a
+        # result of which it fails to add glib-2.0 and freetype2 to the list of
+        # library dependencies. Compiling QPA plugins uses the static
+        # libQt5PlatformSupport.a which needs glib to be specified after it for
+        # linking to succeed, so we add it to QMAKE_LIBS_PRIVATE (we cannot use
+        # LIBS as that would put -lglib-2.0 before libQt5PlatformSupport. See
         # https://bugs.archlinux.org/task/38819
 
         pro = textwrap.dedent(
@@ -518,12 +546,13 @@ class Build(Command):
             HEADERS = {headers}
             SOURCES = {sources}
             OTHER_FILES = {others}
+            INCLUDEPATH += {freetype}
             DESTDIR = {destdir}
             CONFIG -= create_cmake  # Prevent qmake from generating a cmake build file which it puts in the calibre src directory
             QMAKE_LIBS_PRIVATE += {glib} {fontconfig}
             ''').format(
                 headers=' '.join(headers), sources=' '.join(sources), others=' '.join(others), destdir=self.d(
-                    target), glib=glib_flags, fontconfig=fontconfig_flags)
+                    target), glib=glib_flags, fontconfig=fontconfig_flags, freetype=' '.join(ft_inc_dirs))
         bdir = self.j(self.d(self.SRC), 'build', 'headless')
         if not os.path.exists(bdir):
             os.makedirs(bdir)
@@ -602,7 +631,7 @@ class Build(Command):
         cwd = os.getcwdu()
         qmc = []
         if iswindows:
-            qmc += ['-spec', 'win32-msvc2008']
+            qmc += ['-spec', qmakespec]
         fext = 'dll' if iswindows else 'dylib' if isosx else 'so'
         name = '%s%s.%s' % ('release/' if iswindows else 'lib', sip['target'], fext)
         try:
@@ -611,7 +640,7 @@ class Build(Command):
                 self.check_call([QMAKE] + qmc + [proname])
                 self.check_call([make]+([] if iswindows else ['-j%d'%(cpu_count or 1)]))
                 shutil.copy2(os.path.realpath(name), dest)
-                if iswindows:
+                if iswindows and os.path.exists(name + '.manifest'):
                     shutil.copy2(name + '.manifest', dest + '.manifest')
 
         finally:

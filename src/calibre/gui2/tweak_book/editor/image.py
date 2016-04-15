@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -10,7 +10,7 @@ import sys
 from functools import partial
 
 from PyQt5.Qt import (
-    QMainWindow, Qt, QApplication, pyqtSignal, QLabel, QIcon, QFormLayout,
+    QMainWindow, Qt, QApplication, pyqtSignal, QLabel, QIcon, QFormLayout, QSize,
     QDialog, QSpinBox, QCheckBox, QDialogButtonBox, QToolButton, QMenu, QInputDialog)
 
 from calibre.gui2 import error_dialog
@@ -116,6 +116,14 @@ class Editor(QMainWindow):
             self.modification_state_changed.emit(val)
         return property(fget=fget, fset=fset)
 
+    @dynamic_property
+    def current_editing_state(self):
+        def fget(self):
+            return {}
+        def fset(self, val):
+            pass
+        return property(fget=fget, fset=fset)
+
     @property
     def undo_available(self):
         return self.canvas.undo_action.isEnabled()
@@ -151,6 +159,7 @@ class Editor(QMainWindow):
             return self.get_raw_data()
         def fset(self, val):
             self.canvas.load_image(val)
+            self._is_modified = False  # The image_changed signal will have been triggered causing this editor to be incorrectly marked as modified
         return property(fget=fget, fset=fset)
 
     def replace_data(self, raw, only_if_different=True):
@@ -276,6 +285,7 @@ class Editor(QMainWindow):
         for x in self.bars:
             x.setFloatable(False)
             x.topLevelChanged.connect(self.toolbar_floated)
+            x.setIconSize(QSize(tprefs['toolbar_icon_size'], tprefs['toolbar_icon_size']))
         self.restore_state()
 
     def toolbar_floated(self, floating):

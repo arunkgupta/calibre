@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -11,20 +11,21 @@ from functools import partial
 
 from PyQt5.Qt import (
     QGridLayout, QSize, QListView, QStyledItemDelegate, QLabel, QPixmap,
-    QApplication, QSizePolicy, QAbstractListModel, Qt, QRect,
+    QApplication, QSizePolicy, QAbstractListModel, Qt, QRect, QCheckBox,
     QPainter, QModelIndex, QSortFilterProxyModel, QLineEdit, QToolButton,
     QIcon, QFormLayout, pyqtSignal, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
-    QMenu, QInputDialog)
+    QMenu, QInputDialog, QHBoxLayout)
 
 from calibre import fit_image
 from calibre.constants import plugins
 from calibre.ebooks.metadata import string_to_authors
 from calibre.ebooks.metadata.book.base import Metadata
-from calibre.gui2 import choose_files, error_dialog
+from calibre.gui2 import choose_files, error_dialog, pixmap_to_data
 from calibre.gui2.languages import LanguagesEdit
 from calibre.gui2.tweak_book import current_container, tprefs
 from calibre.gui2.tweak_book.widgets import Dialog
 from calibre.gui2.tweak_book.file_list import name_is_ok
+from calibre.ptempfile import PersistentTemporaryFile
 from calibre.utils.localization import get_lang, canonicalize_lang
 from calibre.utils.icu import sort_key
 
@@ -150,6 +151,9 @@ class Images(QAbstractListModel):
                     self.image_names.append(name)
 
     def refresh(self):
+        from calibre.gui2.tweak_book.boss import get_boss
+        boss = get_boss()
+        boss.commit_all_editors_to_container()
         self.beginResetModel()
         self.build()
         self.endResetModel()
@@ -222,7 +226,6 @@ class InsertImage(Dialog):
         l.addWidget(b, 2, 1)
         f.textChanged.connect(self.filter_changed)
 
-        l.addWidget(self.bb, 3, 0, 1, 2)
         if self.for_browsing:
             self.bb.clear()
             self.bb.addButton(self.bb.Close)
@@ -236,8 +239,26 @@ class InsertImage(Dialog):
             b.clicked.connect(self.import_image)
             b.setIcon(QIcon(I('view-image.png')))
             b.setToolTip(_('Import an image from elsewhere in your computer'))
+            b = self.paste_button = self.bb.addButton(_('&Paste image'), self.bb.ActionRole)
+            b.clicked.connect(self.paste_image)
+            b.setIcon(QIcon(I('edit-paste.png')))
+            b.setToolTip(_('Paste an image from the clipboard'))
+            self.fullpage = f = QCheckBox(_('Full page image'), self)
+            f.setToolTip(_('Insert the image so that it takes up an entire page when viewed in a reader'))
+            f.setChecked(tprefs['insert_full_screen_image'])
+            self.preserve_aspect_ratio = a = QCheckBox(_('Preserve aspect ratio'))
+            a.setToolTip(_('Preserve the aspect ratio of the inserted image when rendering it full paged'))
+            a.setChecked(tprefs['preserve_aspect_ratio_when_inserting_image'])
+            f.toggled.connect(lambda : (tprefs.set('insert_full_screen_image', f.isChecked()), a.setVisible(f.isChecked())))
+            a.toggled.connect(lambda : tprefs.set('preserve_aspect_ratio_when_inserting_image', a.isChecked()))
+            a.setVisible(f.isChecked())
+            h = QHBoxLayout()
+            l.addLayout(h, 3, 0, 1, -1)
+            h.addWidget(f), h.addStretch(10), h.addWidget(a)
+        l.addWidget(self.bb, 4, 0, 1, 2)
 
     def refresh(self):
+        self.d.cover_cache.clear()
         self.model.refresh()
 
     def import_image(self):
@@ -252,6 +273,26 @@ class InsertImage(Dialog):
             if d.exec_() == d.Accepted and d.filename:
                 self.accept()
                 self.chosen_image_is_external = (d.filename, path)
+
+    def paste_image(self):
+        c = QApplication.instance().clipboard()
+        img = c.image()
+        if img.isNull():
+            img = c.image(c.Selection)
+        if img.isNull():
+            return error_dialog(self, _('No image'), _(
+                'There is no image on the clipboard'), show=True)
+        d = ChooseName('image.jpg', self)
+        if d.exec_() == d.Accepted and d.filename:
+            fmt = d.filename.rpartition('.')[-1].lower()
+            if fmt not in {'jpg', 'jpeg', 'png'}:
+                return error_dialog(self, _('Invalid file extension'), _(
+                    'The file name you choose must have a .jpg or .png extension'), show=True)
+            t = PersistentTemporaryFile(prefix='editor-paste-image-', suffix='.' + fmt)
+            t.write(pixmap_to_data(img, fmt))
+            t.close()
+            self.chosen_image_is_external = (d.filename, t.name)
+            self.accept()
 
     def pressed(self, index):
         if QApplication.mouseButtons() & Qt.LeftButton:
@@ -276,7 +317,7 @@ def get_resource_data(rtype, parent):
     if rtype == 'image':
         d = InsertImage(parent)
         if d.exec_() == d.Accepted:
-            return d.chosen_image, d.chosen_image_is_external
+            return d.chosen_image, d.chosen_image_is_external, d.fullpage.isChecked(), d.preserve_aspect_ratio.isChecked()
 
 def create_folder_tree(container):
     root = {}

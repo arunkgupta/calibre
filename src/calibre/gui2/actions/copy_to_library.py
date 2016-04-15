@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -166,12 +166,33 @@ class Worker(Thread):  # {{{
                             self.duplicate_ids[x] = (mi.title, mi.authors)
                         continue
 
-                newdb.import_book(mi, paths, notify=False, import_hooks=False,
+                new_authors = {k for k, v in newdb.new_api.get_item_ids('authors', mi.authors).iteritems() if v is None}
+                new_book_id = newdb.import_book(mi, paths, notify=False, import_hooks=False,
                     apply_import_tags=tweaks['add_new_book_tags_when_importing_books'],
                     preserve_uuid=self.delete_after)
+                if new_authors:
+                    author_id_map = self.db.new_api.get_item_ids('authors', new_authors)
+                    sort_map, link_map = {}, {}
+                    for author, aid in author_id_map.iteritems():
+                        if aid is not None:
+                            adata = self.db.new_api.author_data((aid,)).get(aid)
+                            if adata is not None:
+                                aid = newdb.new_api.get_item_id('authors', author)
+                                if aid is not None:
+                                    asv = adata.get('sort')
+                                    if asv:
+                                        sort_map[aid] = asv
+                                    alv = adata.get('link')
+                                    if alv:
+                                        link_map[aid] = alv
+                    if sort_map:
+                        newdb.new_api.set_sort_for_authors(sort_map, update_books=False)
+                    if link_map:
+                        newdb.new_api.set_link_for_authors(link_map)
+
                 co = self.db.conversion_options(x, 'PIPE')
                 if co is not None:
-                    newdb.set_conversion_options(x, 'PIPE', co)
+                    newdb.set_conversion_options(new_book_id, 'PIPE', co)
                 self.processed.add(x)
             finally:
                 for path in paths:
@@ -316,7 +337,7 @@ libraries_with_checked_columns = defaultdict(set)
 class CopyToLibraryAction(InterfaceAction):
 
     name = 'Copy To Library'
-    action_spec = (_('Copy to library'), 'lt.png',
+    action_spec = (_('Copy to library'), 'copy-to-library.png',
             _('Copy selected books to the specified library'), None)
     popup_type = QToolButton.InstantPopup
     dont_add_to = frozenset(['context-menu-device'])
@@ -351,6 +372,7 @@ class CopyToLibraryAction(InterfaceAction):
             self.menu.addAction(_('Choose library by path...'), self.choose_library)
             self.menu.addSeparator()
         for name, loc in locations:
+            name = name.replace('&', '&&')
             self.menu.addAction(name, partial(self.copy_to_library,
                 loc))
             self.menu.addAction(name + ' ' + _('(delete after copy)'),
@@ -395,11 +417,12 @@ class CopyToLibraryAction(InterfaceAction):
 
         # Open the new db so we can check the custom columns. We use only the
         # backend since we only need the custom column definitions, not the
-        # rest of the data in the db.
+        # rest of the data in the db. We also do not want the user defined
+        # formatter functions because loading them can poison the template cache
         global libraries_with_checked_columns
 
         from calibre.db.legacy import create_backend
-        newdb = create_backend(loc)
+        newdb = create_backend(loc, load_user_formatter_functions=False)
 
         continue_processing = True
         with closing(newdb):
@@ -409,11 +432,12 @@ class CopyToLibraryAction(InterfaceAction):
                 incompatible_columns = []
                 missing_columns = []
                 for k, m in db.field_metadata.custom_iteritems():
-                    if m['datatype'] == 'composite':
-                        continue
                     if k not in newdb_meta:
                         missing_columns.append(k)
                     elif not self._column_is_compatible(m, newdb_meta[k]):
+                        # Note that composite columns are always assumed to be
+                        # compatible. No attempt is made to copy the template
+                        # from the source to the destination.
                         incompatible_columns.append(k)
 
                 if missing_columns or incompatible_columns:
@@ -488,5 +512,3 @@ class CopyToLibraryAction(InterfaceAction):
         warning_dialog(self.gui, _('Not allowed'),
                     _('You cannot use other libraries while using the environment'
                       ' variable CALIBRE_OVERRIDE_DATABASE_PATH.'), show=True)
-
-

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -125,8 +125,7 @@ class MOBIFile(object):
         text = self.raw_text
         self.files = []
         for skel in self.skel_index.records:
-            sects = [x for x in self.sect_index.records if x.file_number
-                    == skel.file_number]
+            sects = [x for x in self.sect_index.records if x.file_number == skel.file_number]
             skeleton = text[skel.start_position:skel.start_position+skel.length]
             ftext = skeleton
             first_aid = sects[0].toc_text
@@ -199,7 +198,10 @@ class MOBIFile(object):
                         prefix, ext = 'hd-images', q
                         resource_index = len(container.resources)
             elif sig == b'\xa0\xa0\xa0\xa0' and len(payload) == 4:
-                container.resources.append(None)
+                if container is None:
+                    print ('Found an end of container record with no container, ignoring')
+                else:
+                    container.resources.append(None)
                 continue
             elif sig not in known_types:
                 if container is not None and len(container.resources) == container.num_of_resource_records:

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement
 
@@ -62,7 +62,7 @@ class Check(Command):
             errors = False
             ext = os.path.splitext(f)[1]
             if ext in {'.py', '.recipe'}:
-                p = subprocess.Popen(['flake8', '--ignore=E,W', f])
+                p = subprocess.Popen(['flake8-python2', '--ignore=E,W', f])
                 if p.wait() != 0:
                     errors = True
             else:
@@ -78,13 +78,12 @@ class Check(Command):
                 raise SystemExit(1)
             cache[f] = mtime
         cPickle.dump(cache, open(self.CACHE, 'wb'), -1)
-        wn_path = os.path.expanduser('~/work/servers/src/calibre_servers/main')
+        wn_path = os.path.expanduser('~/work/srv/main/static')
         if os.path.exists(wn_path):
-            sys.path.insert(0, self.d(self.d(wn_path))), sys.path.insert(0, wn_path)
+            sys.path.insert(0, wn_path)
             self.info('\tChecking Changelog...')
-            os.environ['DJANGO_SETTINGS_MODULE'] = 'calibre_servers.status.settings'
             import whats_new
-            whats_new.test()
+            whats_new.render_changelog(self.j(self.d(self.SRC), 'Changelog.yaml'))
             sys.path.remove(wn_path)
 
     def report_errors(self, errors):

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -8,13 +8,14 @@ __docformat__ = 'restructuredtext en'
 import functools
 
 from PyQt5.Qt import (Qt, QApplication, QStackedWidget, QMenu, QTimer,
-        QSize, QSizePolicy, QStatusBar, QLabel, QFont, QAction, QTabBar)
+        QSize, QSizePolicy, QStatusBar, QLabel, QFont, QAction, QTabBar,
+        QVBoxLayout, QWidget, QSplitter)
 
 from calibre.utils.config import prefs
 from calibre.utils.icu import sort_key
 from calibre.constants import (isosx, __appname__, preferred_encoding,
     get_version)
-from calibre.gui2 import config, is_widescreen, gprefs
+from calibre.gui2 import config, is_widescreen, gprefs, error_dialog
 from calibre.gui2.library.views import BooksView, DeviceBooksView
 from calibre.gui2.library.alternate_views import GridView
 from calibre.gui2.widgets import Splitter, LayoutButton
@@ -80,7 +81,7 @@ class LibraryViewMixin(object):  # {{{
         for v in (self.memory_view, self.card_a_view, self.card_b_view):
             v.set_context_menu(dm, ec)
 
-        if self.cover_flow is not None:
+        if hasattr(self.cover_flow, 'set_context_menu'):
             cm = QMenu(self.cover_flow)
             populate_menu(cm,
                     gprefs['action-layout-context-menu-cover-browser'], self.iactions)
@@ -99,6 +100,37 @@ class LibraryViewMixin(object):  # {{{
 
     # }}}
 
+class QuickviewSplitter(QSplitter):  # {{{
+
+    def __init__(self, parent=None, orientation=Qt.Vertical, qv_widget=None):
+        QSplitter.__init__(self, parent=parent, orientation=orientation)
+        self.splitterMoved.connect(self.splitter_moved)
+        self.setChildrenCollapsible(False)
+        self.qv_widget = qv_widget
+
+    def splitter_moved(self):
+        gprefs['quickview_dialog_heights'] = self.sizes()
+
+    def resizeEvent(self, *args):
+        QSplitter.resizeEvent(self, *args)
+        if self.sizes()[1] != 0:
+            gprefs['quickview_dialog_heights'] = self.sizes()
+
+    def set_sizes(self):
+        sizes =  gprefs.get('quickview_dialog_heights', [])
+        if len(sizes) == 2:
+            self.setSizes(sizes)
+
+    def add_quickview_dialog(self, qv_dialog):
+        self.qv_widget.layout().addWidget(qv_dialog)
+
+    def show_quickview_widget(self):
+        self.qv_widget.show()
+
+    def hide_quickview_widget(self):
+        self.qv_widget.hide()
+# }}}
+
 class LibraryWidget(Splitter):  # {{{
 
     def __init__(self, parent):
@@ -113,6 +145,10 @@ class LibraryWidget(Splitter):  # {{{
                 connect_button=not config['separate_cover_flow'],
                 side_index=idx, initial_side_size=size, initial_show=False,
                 shortcut='Shift+Alt+B')
+
+        quickview_widget = QWidget()
+        parent.quickview_splitter = QuickviewSplitter(
+                parent=self, orientation=Qt.Vertical, qv_widget=quickview_widget)
         parent.library_view = BooksView(parent)
         parent.library_view.setObjectName('library_view')
         stack = QStackedWidget(self)
@@ -121,7 +157,13 @@ class LibraryWidget(Splitter):  # {{{
         parent.grid_view = GridView(parent)
         parent.grid_view.setObjectName('grid_view')
         av.add_view('grid', parent.grid_view)
-        self.addWidget(stack)
+        parent.quickview_splitter.addWidget(stack)
+
+        quickview_widget.setLayout(QVBoxLayout())
+        parent.quickview_splitter.addWidget(quickview_widget)
+        parent.quickview_splitter.hide_quickview_widget()
+
+        self.addWidget(parent.quickview_splitter)
 # }}}
 
 class Stack(QStackedWidget):  # {{{
@@ -283,6 +325,25 @@ class VLTabs(QTabBar):  # {{{
         self.tabCloseRequested.connect(self.tab_close)
         self.setStyleSheet('QTabBar::tab:selected { font-weight: bold } QTabBar::tab { text-align: center }')
         self.setVisible(gprefs['show_vl_tabs'])
+        self.next_action = a = QAction(self)
+        a.triggered.connect(partial(self.next_tab, delta=1)), self.gui.addAction(a)
+        self.previous_action = a = QAction(self)
+        a.triggered.connect(partial(self.next_tab, delta=-1)), self.gui.addAction(a)
+        self.gui.keyboard.register_shortcut(
+            'virtual-library-tab-bar-next', _('Next virtual library'), action=self.next_action,
+            default_keys=('Ctrl+Right',),
+            description=_('Switch to the next Virtual Library in the Virtual Library tab bar')
+        )
+        self.gui.keyboard.register_shortcut(
+            'virtual-library-tab-bar-previous', _('Previous virtual library'), action=self.previous_action,
+            default_keys=('Ctrl+Left',),
+            description=_('Switch to the previous Virtual Library in the Virtual Library tab bar')
+        )
+
+    def next_tab(self, delta=1):
+        if self.count() > 1 and self.isVisible():
+            idx = (self.currentIndex() + delta) % self.count()
+            self.setCurrentIndex(idx)
 
     def enable_bar(self):
         gprefs['show_vl_tabs'] = True
@@ -299,13 +360,13 @@ class VLTabs(QTabBar):  # {{{
         self.gui.apply_virtual_library(vl, update_tabs=False)
 
     def tab_moved(self, from_, to):
-        self.current_db.prefs['virt_libs_order'] = [unicode(self.tabData(i) or '') for i in range(self.count())]
+        self.current_db.new_api.set_pref('virt_libs_order', [unicode(self.tabData(i) or '') for i in range(self.count())])
 
     def tab_close(self, index):
         vl = unicode(self.tabData(index) or '')
         if vl:  # Dont allow closing the All Books tab
-            self.current_db.prefs['virt_libs_hidden'] = list(
-                self.current_db.prefs['virt_libs_hidden']) + [vl]
+            self.current_db.new_api.set_pref('virt_libs_hidden', list(
+                self.current_db.prefs['virt_libs_hidden']) + [vl])
             self.removeTab(index)
 
     @property
@@ -326,14 +387,14 @@ class VLTabs(QTabBar):  # {{{
         hidden = set(db.prefs['virt_libs_hidden'])
         if hidden - virt_libs:
             hidden = hidden.intersection(virt_libs)
-            db.prefs['virt_libs_hidden'] = list(hidden)
+            db.new_api.set_pref('virt_libs_hidden', list(hidden))
         order = db.prefs['virt_libs_order']
         while self.count():
             self.removeTab(0)
         current_lib = db.data.get_base_restriction_name()
         if current_lib in hidden:
             hidden.discard(current_lib)
-            db.prefs['virt_libs_hidden'] = list(hidden)
+            db.new_api.set_pref('virt_libs_hidden', list(hidden))
         current_idx = all_idx = None
         virt_libs = (set(virt_libs) - hidden) | {''}
         order = {x:i for i, x in enumerate(order)}
@@ -372,15 +433,22 @@ class VLTabs(QTabBar):  # {{{
             for x in hidden:
                 s.addAction(x, partial(self.restore, x))
         m.addAction(_('Hide virtual library tabs'), self.disable_bar)
+        i = self.tabAt(ev.pos())
+        if i > -1:
+            vl = unicode(self.tabData(i) or '')
+            if vl:
+                m.addSeparator()
+                m.addAction(_('Edit "%s"') % vl, partial(self.gui.do_create_edit, name=vl))
+                m.addAction(_('Delete "%s"') % vl, partial(self.gui.remove_vl_triggered, name=vl))
         m.exec_(ev.globalPos())
 
     def sort_alphabetically(self):
-        self.current_db.prefs['virt_libs_order'] = ()
+        self.current_db.new_api.set_pref('virt_libs_order', ())
         self.rebuild()
 
     def restore(self, x):
         h = self.current_db.prefs['virt_libs_hidden']
-        self.current_db.prefs['virt_libs_hidden'] = list(set(h) - {x})
+        self.current_db.new_api.set_pref('virt_libs_hidden', list(set(h) - {x}))
         self.rebuild()
 
 # }}}
@@ -447,6 +515,10 @@ class LayoutMixin(object):  # {{{
         self.book_details.files_dropped.connect(self.iactions['Add Books'].files_dropped_on_book)
         self.book_details.cover_changed.connect(self.bd_cover_changed,
                 type=Qt.QueuedConnection)
+        self.book_details.open_cover_with.connect(self.bd_open_cover_with,
+                type=Qt.QueuedConnection)
+        self.book_details.open_fmt_with.connect(self.bd_open_fmt_with,
+                type=Qt.QueuedConnection)
         self.book_details.cover_removed.connect(self.bd_cover_removed,
                 type=Qt.QueuedConnection)
         self.book_details.remote_file_dropped.connect(
@@ -457,10 +529,14 @@ class LayoutMixin(object):  # {{{
         self.book_details.search_requested.connect(self.search.set_search_string)
         self.book_details.remove_specific_format.connect(
                 self.iactions['Remove Books'].remove_format_by_id)
+        self.book_details.remove_metadata_item.connect(
+                self.iactions['Edit Metadata'].remove_metadata_item)
         self.book_details.save_specific_format.connect(
                 self.iactions['Save To Disk'].save_library_format_by_ids)
         self.book_details.restore_specific_format.connect(
             self.iactions['Remove Books'].restore_format)
+        self.book_details.set_cover_from_format.connect(
+            self.iactions['Edit Metadata'].set_cover_from_format)
         self.book_details.copy_link.connect(self.bd_copy_link,
                 type=Qt.QueuedConnection)
         self.book_details.view_device_book.connect(
@@ -480,14 +556,38 @@ class LayoutMixin(object):  # {{{
 
     def bd_cover_changed(self, id_, cdata):
         self.library_view.model().db.set_cover(id_, cdata)
-        if self.cover_flow:
-            self.cover_flow.dataChanged()
+        self.refresh_cover_browser()
+
+    def bd_open_cover_with(self, book_id, entry):
+        cpath = self.current_db.new_api.format_abspath(book_id, '__COVER_INTERNAL__')
+        if cpath:
+            from calibre.gui2.open_with import run_program
+            run_program(entry, cpath, self)
+
+    def bd_open_fmt_with(self, book_id, fmt, entry):
+        path = self.current_db.new_api.format_abspath(book_id, fmt)
+        if path:
+            from calibre.gui2.open_with import run_program
+            run_program(entry, path, self)
+        else:
+            fmt = fmt.upper()
+            error_dialog(self, _('No %s format') % fmt, _(
+                'The book {0} does not have the {1} format').format(
+                    self.current_db.new_api.field_for('title', book_id, default_value=_('Unknown')),
+                    fmt), show=True)
+
+    def open_with_action_triggerred(self, fmt, entry, *args):
+        book_id = self.library_view.current_book
+        if book_id is not None:
+            if fmt == 'cover_image':
+                self.bd_open_cover_with(book_id, entry)
+            else:
+                self.bd_open_fmt_with(book_id, fmt, entry)
 
     def bd_cover_removed(self, id_):
         self.library_view.model().db.remove_cover(id_, commit=True,
                 notify=False)
-        if self.cover_flow:
-            self.cover_flow.dataChanged()
+        self.refresh_cover_browser()
 
     def bd_copy_link(self, url):
         if url:
@@ -528,5 +628,3 @@ class LayoutMixin(object):  # {{{
         self.status_bar.update_state(library_total, total, current, selected)
 
 # }}}
-
-

@@ -1,4 +1,4 @@
-#!/usr/bin/env  python
+#!/usr/bin/env  python2
 # -*- coding: utf-8 -*-
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
@@ -27,7 +27,9 @@ class NYTimes(BasicNewsRecipe):
 
     # set getPopularArticles to False if you don't want the Most E-mailed and Most Viewed articles
     # otherwise you will get up to 20 of the most popular e-mailed and viewed articles (in each category)
-    getPopularArticles = True
+    # This is currently disabled because the NYT is changing this functionality
+    # on their website to a new "Trending" page
+    getPopularArticles = False
     popularPeriod = '1'  # set this to the number of days to include in the measurement
                         # e.g. 7 will get the most popular measured over the last 7 days
                         # and 30 will get the most popular measured over 30 days.
@@ -116,7 +118,7 @@ class NYTimes(BasicNewsRecipe):
                     ]
 
     tech_feeds = [
-               (u'Tech - Pogues Posts', u'http://pogue.blogs.nytimes.com/feed/'),
+               (u'Tech - News', u'http://pogue.blogs.nytimes.com/feed/'),
                (u'Tech - Bits', u'http://bits.blogs.nytimes.com/feed/'),
                (u'Tech - Gadgetwise', u'http://gadgetwise.blogs.nytimes.com/feed/'),
                (u'Tech - Open', u'http://open.blogs.nytimes.com/feed/')

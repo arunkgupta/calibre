@@ -179,8 +179,7 @@ class Plugin(object):  # {{{
             help_text = self.customization_help(gui=True)
             help_text = QLabel(help_text, config_dialog)
             help_text.setWordWrap(True)
-            help_text.setTextInteractionFlags(Qt.LinksAccessibleByMouse
-                    | Qt.LinksAccessibleByKeyboard)
+            help_text.setTextInteractionFlags(Qt.LinksAccessibleByMouse | Qt.LinksAccessibleByKeyboard)
             help_text.setOpenExternalLinks(True)
             v.addWidget(help_text)
             sc = plugin_customization(self)
@@ -327,7 +326,8 @@ class FileTypePlugin(Plugin):  # {{{
     on_import      = False
 
     #: If True, this plugin is run after books are added
-    #: to the database
+    #: to the database. In this case the postimport and postadd
+    #: methods of the plugin are called.
     on_postimport  = False
 
     #: If True, this plugin is run just before a conversion
@@ -361,11 +361,32 @@ class FileTypePlugin(Plugin):  # {{{
 
     def postimport(self, book_id, book_format, db):
         '''
-        Called post import, i.e., after the book file has been added to the database.
+        Called post import, i.e., after the book file has been added to the database. Note that
+        this is different from :meth:`postadd` which is called when the book record is created for
+        the first time. This method is called whenever a new file is added to a book record. It is
+        useful for modifying the book record based on the contents of the newly added file.
 
         :param book_id: Database id of the added book.
         :param book_format: The file type of the book that was added.
         :param db: Library database.
+        '''
+        pass  # Default implementation does nothing
+
+    def postadd(self, book_id, fmt_map, db):
+        '''
+        Called post add, i.e. after a book has been added to the db. Note that
+        this is different from :meth:`postimport`, which is called after a single book file
+        has been added to a book. postadd() is called only when an entire book record
+        with possibly more than one book file has been created for the first time.
+        This is useful if you wish to modify the book record in the database when the
+        book is first added to calibre.
+
+        :param book_id: Database id of the added book.
+        :param fmt_map: Map of file format to path from which the file format
+            was added. Note that this might or might not point to an actual
+            existing file, as sometimes files are added as streams. In which case
+            it might be a dummy value or an on-existent path.
+        :param db: Library database
         '''
         pass  # Default implementation does nothing
 
@@ -758,5 +779,27 @@ class EditBookToolPlugin(Plugin):  # {{{
     type = _('Edit Book Tool')
     minimum_calibre_version = (1, 46, 0)
 
+# }}}
+
+class LibraryClosedPlugin(Plugin):  # {{{
+    '''
+    LibraryClosedPlugins are run when a library is closed, either at shutdown,
+    when the library is changed, or when a library is used in some other way.
+    At the moment these plugins won't be called by the CLI functions.
+    '''
+    type = _('Library Closed')
+
+    # minimum version 2.54 because that is when support was added
+    minimum_calibre_version = (2, 54, 0)
+
+    def run(self, db):
+        '''
+        The db will be a reference to the new_api (db.cache.py).
+
+        The plugin must run to completion. It must not use the GUI, threads, or
+        any signals.
+        '''
+        raise NotImplementedError('LibraryClosedPlugin '
+                'run method must be overridden in subclass')
 # }}}
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env  python
+#!/usr/bin/env  python2
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
 __docformat__ = 'restructuredtext en'
@@ -10,9 +10,11 @@ Command line interface to the calibre database.
 import sys, os, cStringIO, re
 import unicodedata
 from textwrap import TextWrapper
+from optparse import OptionValueError, OptionGroup
 
 from calibre import preferred_encoding, prints, isbytestring, patheq
 from calibre.constants import iswindows
+from calibre.db.adding import compile_rule
 from calibre.db.legacy import LibraryDatabase
 from calibre.utils.config import OptionParser, prefs, tweaks
 from calibre.ebooks.metadata.meta import get_metadata
@@ -21,10 +23,11 @@ from calibre.ebooks.metadata.opf2 import OPFCreator, OPF
 from calibre.utils.date import isoformat
 from calibre.utils.localization import canonicalize_lang
 
-FIELDS = set(['title', 'authors', 'author_sort', 'publisher', 'rating',
-    'timestamp', 'size', 'tags', 'comments', 'series', 'series_index',
-    'formats', 'isbn', 'uuid', 'pubdate', 'cover', 'last_modified',
-    'identifiers'])
+FIELDS = {
+    'title', 'authors', 'author_sort', 'publisher', 'rating', 'timestamp',
+    'size', 'tags', 'comments', 'series', 'series_index', 'formats', 'isbn',
+    'uuid', 'pubdate', 'cover', 'last_modified', 'identifiers', 'languages'
+}
 
 do_notify = True
 def send_message(msg=''):
@@ -47,10 +50,13 @@ def write_dirtied(db):
 def get_parser(usage):
     parser = OptionParser(usage)
     go = parser.add_option_group(_('GLOBAL OPTIONS'))
+    go.is_global_options = True
     go.add_option('--library-path', '--with-library', default=None, help=_('Path to the calibre library. Default is to use the path stored in the settings.'))
     go.add_option('--dont-notify-gui', default=False, action='store_true',
             help=_('Do not notify the running calibre GUI (if any) that the database has'
                 ' changed. Use with care, as it can lead to database corruption!'))
+    go.add_option('-h', '--help', help=_('show this help message and exit'), action='help')
+    go.add_option('--version', help=_("show program's version number and exit"), action='version')
 
     return parser
 
@@ -69,13 +75,18 @@ def get_db(dbpath, options):
 def do_list(db, fields, afields, sort_by, ascending, search_text, line_width, separator,
             prefix, limit, for_machine=False):
     from calibre.utils.terminal import ColoredStream, geometry
-    if sort_by:
-        db.sort(sort_by, ascending)
+    if sort_by is None:
+        ascending = True
+    db.sort(sort_by or 'id', ascending)
     if search_text:
         db.search(search_text)
     data = db.get_data_as_dict(prefix, authors_as_string=True, convert_to_local_tz=False)
     if limit > -1:
         data = data[:limit]
+    try:
+        fields.remove('id')
+    except ValueError:
+        pass
     fields = ['id'] + fields
     title_fields = fields
     def field_name(f):
@@ -102,6 +113,8 @@ def do_list(db, fields, afields, sort_by, ascending, search_text, line_width, se
                     record[key] = isoformat(val, as_utc=True)
                 elif val is None:
                     del record[key]
+                elif key == 'languages' and val:
+                    record[key] = val.split(',')
         return json.dumps(data, indent=2, sort_keys=True)
 
     fields = list(map(field_name, fields))
@@ -164,7 +177,7 @@ def do_list(db, fields, afields, sort_by, ascending, search_text, line_width, se
     return o.getvalue()
 
 def list_option_parser(db=None):
-    fields = set(FIELDS)
+    fields = set(FIELDS) | {'id'}
     if db is not None:
         for f, data in db.custom_column_label_map.iteritems():
             fields.add('*'+f)
@@ -185,7 +198,7 @@ List the books available in the calibre database.
                           ' special field "all" can be used to select all fields.'
                           )%', '.join(sorted(fields)))
     parser.add_option('--sort-by', default=None,
-                      help=_('The field by which to sort the results.\nAvailable fields: %s\nDefault: %%default')%', '.join(sorted(FIELDS)))
+                      help=_('The field by which to sort the results.\nAvailable fields: {0}\nDefault: {1}').format(', '.join(sorted(FIELDS)), 'id'))
     parser.add_option('--ascending', default=False, action='store_true',
                       help=_('Sort results in ascending order'))
     parser.add_option('-s', '--search', default=None,
@@ -203,13 +216,13 @@ List the books available in the calibre database.
 
 def command_list(args, dbpath):
     pre = get_parser('')
-    pargs = [x for x in args if x.startswith('--with-library') or x.startswith('--library-path')
-        or not x.startswith('-')]
+    pargs = [x for x in args if x.startswith('--with-library') or x.startswith('--library-path') or
+             not x.startswith('-')]
     opts = pre.parse_args(sys.argv[:1] + pargs)[0]
     db = get_db(dbpath, opts)
     parser = list_option_parser(db=db)
     opts, args = parser.parse_args(sys.argv[:1] + args)
-    afields = set(FIELDS)
+    afields = set(FIELDS) | {'id'}
     if db is not None:
         for f, data in db.custom_column_label_map.iteritems():
             afields.add('*'+f)
@@ -247,7 +260,7 @@ class DevNull(object):
 NULL = DevNull()
 
 def do_add(db, paths, one_book_per_directory, recurse, add_duplicates, otitle,
-        oauthors, oisbn, otags, oseries, oseries_index, ocover, olanguages):
+        oauthors, oisbn, otags, oseries, oseries_index, ocover, oidentifiers, olanguages, compiled_rules):
     orig = sys.stdout
     # sys.stdout = NULL
     try:
@@ -274,6 +287,10 @@ def do_add(db, paths, one_book_per_directory, recurse, add_duplicates, otitle,
                 mi.title = os.path.splitext(os.path.basename(book))[0]
             if not mi.authors:
                 mi.authors = [_('Unknown')]
+            if oidentifiers:
+                ids = mi.get_identifiers()
+                ids.update(oidentifiers)
+                mi.set_identifiers(ids)
             for x in ('title', 'authors', 'isbn', 'tags', 'series', 'languages'):
                 val = locals()['o'+x]
                 if val:
@@ -282,6 +299,7 @@ def do_add(db, paths, one_book_per_directory, recurse, add_duplicates, otitle,
                 mi.series_index = oseries_index
             if ocover:
                 mi.cover = ocover
+                mi.cover_data = (None, None)
 
             formats.append(format)
             metadata.append(mi)
@@ -295,14 +313,15 @@ def do_add(db, paths, one_book_per_directory, recurse, add_duplicates, otitle,
             added_ids |= set(ids)
 
         dir_dups = []
+
         for dir in dirs:
             if recurse:
                 dir_dups.extend(db.recursive_import(dir,
                     single_book_per_directory=one_book_per_directory,
-                    added_ids=added_ids))
+                    added_ids=added_ids, compiled_rules=compiled_rules))
             else:
                 func = db.import_book_directory if one_book_per_directory else db.import_book_directory_multiple
-                dups = func(dir, added_ids=added_ids)
+                dups = func(dir, added_ids=added_ids, compiled_rules=compiled_rules)
                 if not dups:
                     dups = []
                 dir_dups.extend(dups)
@@ -350,10 +369,6 @@ Add the specified files as books to the database. You can also specify directori
 the directory related options below.
 '''
                             ))
-    parser.add_option('-1', '--one-book-per-directory', action='store_true', default=False,
-                      help=_('Assume that each directory has only a single logical book and that all files in it are different e-book formats of that book'))
-    parser.add_option('-r', '--recurse', action='store_true', default=False,
-                      help=_('Process directories recursively'))
     parser.add_option('-d', '--duplicates', action='store_true', default=False,
                       help=_('Add books to database even if they already exist. Comparison is done based on book titles.'))
     parser.add_option('-e', '--empty', action='store_true', default=False,
@@ -364,6 +379,8 @@ the directory related options below.
             help=_('Set the authors of the added book(s)'))
     parser.add_option('-i', '--isbn', default=None,
             help=_('Set the ISBN of the added book(s)'))
+    parser.add_option('-I', '--identifier', default=[], action='append',
+                      help=_('Set the identifiers for this book, for e.g. -I asin:XXX -I isbn:YYY'))
     parser.add_option('-T', '--tags', default=None,
             help=_('Set the tags of the added book(s)'))
     parser.add_option('-s', '--series', default=None,
@@ -375,15 +392,44 @@ the directory related options below.
     parser.add_option('-l', '--languages', default=None,
             help=_('A comma separated list of languages (best to use ISO639 language codes, though some language names may also be recognized)'))
 
+    g = OptionGroup(parser, _('ADDING FROM DIRECTORIES'), _(
+        'Options to control the adding of books from directories. By default only files that have extensions of known e-book file types are added.'))
+    def filter_pat(option, opt, value, parser, action):
+        try:
+            getattr(parser.values, option.dest).append(compile_rule({'match_type':'glob', 'query':value, 'action':action}))
+        except Exception:
+            raise OptionValueError('%r is not a valid filename pattern' % value)
+
+    g.add_option('-1', '--one-book-per-directory', action='store_true', default=False,
+                      help=_('Assume that each directory has only a single logical book and that all files in it are different e-book formats of that book'))
+    g.add_option('-r', '--recurse', action='store_true', default=False,
+                      help=_('Process directories recursively'))
+    def fadd(opt, action, help):
+        g.add_option(
+            opt, action='callback', type='string', nargs=1, default=[],
+            callback=filter_pat, dest='filters', callback_args=(action,),
+            metavar=_('GLOB PATTERN'), help=help
+        )
+
+    fadd('--ignore', 'ignore', _(
+        'A filename (glob) pattern, files matching this pattern will be ignored when scanning directories for files.'
+        ' Can be specified multiple times for multiple patterns. For e.g.: *.pdf will ignore all pdf files'))
+    fadd('--add', 'add', _(
+        'A filename (glob) pattern, files matching this pattern will be added when scanning directories for files,'
+        ' even if they are not of a known ebook file type. Can be specified multiple times for multiple patterns.'))
+    parser.add_option_group(g)
+
     return parser
 
-def do_add_empty(db, title, authors, isbn, tags, series, series_index, cover, languages):
+def do_add_empty(db, title, authors, isbn, tags, series, series_index, cover, identifiers, languages):
     from calibre.ebooks.metadata import MetaInformation
     mi = MetaInformation(None)
     if title is not None:
         mi.title = title
     if authors:
         mi.authors = authors
+    if identifiers:
+        mi.set_identifiers(identifiers)
     if isbn:
         mi.isbn = isbn
     if tags:
@@ -407,9 +453,11 @@ def command_add(args, dbpath):
     tags = [x.strip() for x in opts.tags.split(',')] if opts.tags else []
     lcodes = [canonicalize_lang(x) for x in (opts.languages or '').split(',')]
     lcodes = [x for x in lcodes if x]
+    identifiers = (x.partition(':')[::2] for x in opts.identifier)
+    identifiers = dict((k.strip(), v.strip()) for k, v in identifiers if k.strip() and v.strip())
     if opts.empty:
         do_add_empty(get_db(dbpath, opts), opts.title, aut, opts.isbn, tags,
-                opts.series, opts.series_index, opts.cover, lcodes)
+                opts.series, opts.series_index, opts.cover, identifiers, lcodes)
         return 0
     if len(args) < 2:
         parser.print_help()
@@ -418,7 +466,7 @@ def command_add(args, dbpath):
         return 1
     do_add(get_db(dbpath, opts), args[1:], opts.one_book_per_directory,
             opts.recurse, opts.duplicates, opts.title, aut, opts.isbn,
-            tags, opts.series, opts.series_index, opts.cover, lcodes)
+            tags, opts.series, opts.series_index, opts.cover, identifiers, lcodes, opts.filters)
     return 0
 
 def do_remove(db, ids):
@@ -441,7 +489,7 @@ def remove_option_parser():
 %prog remove ids
 
 Remove the books identified by ids from the database. ids should be a comma separated \
-list of id numbers (you can get id numbers by using the list command). For example, \
+list of id numbers (you can get id numbers by using the search command). For example, \
 23,34,57-85 (when specifying a range, the last number in the range is not
 included).
 '''))
@@ -481,7 +529,7 @@ def add_format_option_parser():
 %prog add_format [options] id ebook_file
 
 Add the ebook in ebook_file to the available formats for the logical book identified \
-by id. You can get id by using the list command. If the format already exists, \
+by id. You can get id by using the search command. If the format already exists, \
 it is replaced, unless the do not replace option is specified.\
 '''))
     parser.add_option('--dont-replace', dest='replace', default=True, action='store_false',
@@ -516,7 +564,7 @@ def remove_format_option_parser():
 %prog remove_format [options] id fmt
 
 Remove the format fmt from the logical book identified by id. \
-You can get id by using the list command. fmt should be a file extension \
+You can get id by using the search command. fmt should be a file extension \
 like LRF or TXT or EPUB. If the logical book does not have fmt available, \
 do nothing.
 '''))
@@ -551,7 +599,7 @@ def show_metadata_option_parser():
 %prog show_metadata [options] id
 
 Show the metadata stored in the calibre database for the book identified by id.
-id is an id number from the list command.
+id is an id number from the search command.
 '''))
     parser.add_option('--as-opf', default=False, action='store_true',
                       help=_('Print metadata in OPF form (XML)'))
@@ -579,7 +627,7 @@ def set_metadata_option_parser():
 %prog set_metadata [options] id [/path/to/metadata.opf]
 
 Set the metadata stored in the calibre database for the book identified by id
-from the OPF file metadata.opf. id is an id number from the list command. You
+from the OPF file metadata.opf. id is an id number from the search command. You
 can get a quick feel for the OPF format by using the --as-opf switch to the
 show_metadata command. You can also set the metadata of individual fields with
 the --field option. If you use the --field option, there is no need to specify
@@ -752,7 +800,7 @@ def export_option_parser():
 
 Export the books specified by ids (a comma separated list) to the filesystem.
 The export operation saves all formats of the book, its cover and metadata (in
-an opf file). You can get id numbers from the list command.
+an opf file). You can get id numbers from the search command.
 '''))
     parser.add_option('--all', default=False, action='store_true',
                       help=_('Export all books in database, ignoring the list of ids.'))
@@ -996,7 +1044,7 @@ def set_custom_option_parser():
     %prog set_custom [options] column id value
 
     Set the value of a custom column for the book identified by id.
-    You can get a list of ids using the list command.
+    You can get a list of ids using the search command.
     You can get a list of custom column names using the custom_columns
     command.
     '''))
@@ -1094,13 +1142,19 @@ def command_remove_custom_column(args, dbpath):
 def saved_searches_option_parser():
     parser = get_parser(_(
     '''
-    %prog saved_searches [options] list
-    %prog saved_searches add name search
-    %prog saved_searches remove name
+    %prog saved_searches [options] (list|add|remove)
 
     Manage the saved searches stored in this database.
     If you try to add a query with a name that already exists, it will be
     replaced.
+
+    Syntax for adding:
+
+    %prog saved_searches add search_name search_expression
+
+    Syntax for removing:
+
+    %prog saved_searches remove search_name
     '''))
     return parser
 
@@ -1172,7 +1226,7 @@ class BackupProgress(object):
         else:
             self.count += 1
             prints(u'%.1f%% %s - %s'%((self.count*100)/float(self.total),
-                book_id, mi.title))
+                book_id, getattr(mi, 'title', 'Unknown')))
 
 def command_backup_metadata(args, dbpath):
     parser = backup_metadata_option_parser()
@@ -1318,6 +1372,7 @@ def command_restore_database(args, dbpath):
         dbpath = dbpath.decode(preferred_encoding)
 
     class Progress(object):
+
         def __init__(self):
             self.total = 1
 
@@ -1511,13 +1566,44 @@ def command_clone(args, dbpath):
     db.close()
     LibraryDatabase(loc, default_prefs=dbprefs)
 
+def search_option_parser():
+    parser = get_parser(_(
+    '''\
+%prog search [options] search expression
+
+Search the library for the specified search term, returning a comma separated
+list of book ids matching the search expression. The output format is useful
+to feed into other commands that accept a list of ids as input.
+
+The search expression can be anything from calibre's powerful search query
+language, for example: {0}
+''').format('author:asimov title:robot'))
+    parser.add_option('-l', '--limit', default=sys.maxsize, type=int,
+        help=_('The maximum number of results to return. Default is all results.'))
+    return parser
 
 COMMANDS = ('list', 'add', 'remove', 'add_format', 'remove_format',
             'show_metadata', 'set_metadata', 'export', 'catalog',
             'saved_searches', 'add_custom_column', 'custom_columns',
             'remove_custom_column', 'set_custom', 'restore_database',
             'check_library', 'list_categories', 'backup_metadata',
-            'clone', 'embed_metadata')
+            'clone', 'embed_metadata', 'search')
+
+def command_search(args, dbpath):
+    parser = search_option_parser()
+    opts, args = parser.parse_args(args)
+    if len(args) < 1:
+        parser.print_help()
+        print
+        prints(_('Error: You must specify the search expression'))
+        return 1
+    db = get_db(dbpath, opts)
+    q = ' '.join(args)
+    ids = db.new_api.search(q)
+    if not ids:
+        prints(_('No books matching the search expression:') + ' ' + q, file=sys.stderr)
+        raise SystemExit(1)
+    prints(','.join(map(str, sorted(ids)[:opts.limit])), end='')
 
 
 def option_parser():
@@ -1555,4 +1641,3 @@ def main(args=sys.argv):
 
 if __name__ == '__main__':
     sys.exit(main())
-

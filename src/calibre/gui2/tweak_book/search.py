@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -14,18 +14,20 @@ from PyQt5.Qt import (
     QWidget, QToolBar, Qt, QHBoxLayout, QSize, QIcon, QGridLayout, QLabel, QTimer,
     QPushButton, pyqtSignal, QComboBox, QCheckBox, QSizePolicy, QVBoxLayout, QFont,
     QLineEdit, QToolButton, QListView, QFrame, QApplication, QStyledItemDelegate,
-    QAbstractListModel, QPlainTextEdit, QModelIndex, QMenu, QItemSelection, QStackedLayout)
+    QAbstractListModel, QModelIndex, QMenu, QItemSelection, QStackedLayout, QScrollArea)
 
 import regex
 
 from calibre import prepare_string_for_xml
 from calibre.gui2 import error_dialog, info_dialog, choose_files, choose_save_file
+from calibre.gui2.dialogs.confirm_delete import confirm
 from calibre.gui2.dialogs.message_box import MessageBox
 from calibre.gui2.widgets2 import HistoryComboBox
 from calibre.gui2.tweak_book import tprefs, editors, current_container
 from calibre.gui2.tweak_book.function_replace import (
     FunctionBox, functions as replace_functions, FunctionEditor, remove_function, Function)
 from calibre.gui2.tweak_book.widgets import BusyCursor
+from calibre.gui2.tweak_book.editor.snippets import find_matching_snip, parse_template, string_length, SnippetTextEdit, MODIFIER, KEY
 
 from calibre.utils.icu import primary_contains
 
@@ -57,6 +59,23 @@ class PushButton(AnimatablePushButton):
         AnimatablePushButton.__init__(self, text, parent)
         self.clicked.connect(lambda : parent.search_triggered.emit(action))
 
+def expand_template(line_edit):
+    pos = line_edit.cursorPosition()
+    text = line_edit.text()[:pos]
+    if text:
+        snip, trigger = find_matching_snip(text)
+        if snip is None:
+            error_dialog(line_edit, _('No snippet found'), _(
+                'No matching snippet was found'), show=True)
+            return False
+        text, tab_stops = parse_template(snip['template'])
+        ft = line_edit.text()
+        l = string_length(trigger)
+        line_edit.setText(ft[:pos - l] + text + ft[pos:])
+        line_edit.setCursorPosition(pos - l + string_length(text))
+        return True
+    return False
+
 class HistoryBox(HistoryComboBox):
 
     max_history_items = 100
@@ -67,6 +86,17 @@ class HistoryBox(HistoryComboBox):
         HistoryComboBox.__init__(self, parent)
         self.disable_popup = tprefs['disable_completion_popup_for_search']
         self.clear_msg = clear_msg
+        self.ignore_snip_expansion = False
+
+    def event(self, ev):
+        if ev.type() in (ev.ShortcutOverride, ev.KeyPress) and ev.key() == KEY and ev.modifiers() & MODIFIER:
+            if not self.ignore_snip_expansion:
+                self.ignore_snip_expansion = True
+                expand_template(self.lineEdit())
+                QTimer.singleShot(100, lambda : setattr(self, 'ignore_snip_expansion', False))
+            ev.accept()
+            return True
+        return HistoryComboBox.event(self, ev)
 
     def contextMenuEvent(self, event):
         menu = self.lineEdit().createStandardContextMenu()
@@ -247,9 +277,9 @@ class SearchWidget(QWidget):
         f.setFrameShape(f.VLine)
         fhl.addWidget(f)
 
-        self.fb = fb = PushButton(_('&Find'), 'find', self)
+        self.fb = fb = PushButton(_('Fin&d'), 'find', self)
         self.rfb = rfb = PushButton(_('Replace a&nd Find'), 'replace-find', self)
-        self.rb = rb = PushButton(_('&Replace'), 'replace', self)
+        self.rb = rb = PushButton(_('Re&place'), 'replace', self)
         self.rab = rab = PushButton(_('Replace &all'), 'replace-all', self)
         l.addWidget(fb, 0, 2)
         l.addWidget(rfb, 0, 3)
@@ -461,6 +491,17 @@ class SearchPanel(QWidget):  # {{{
             return QWidget.keyPressEvent(self, ev)
 # }}}
 
+class SearchDescription(QScrollArea):
+
+    def __init__(self, parent):
+        QScrollArea.__init__(self, parent)
+        self.label = QLabel(' \n \n ')
+        self.setWidget(self.label)
+        self.setWidgetResizable(True)
+        self.label.setTextFormat(Qt.PlainText)
+        self.label.setWordWrap(True)
+        self.set_text = self.label.setText
+
 class SearchesModel(QAbstractListModel):
 
     def __init__(self, parent):
@@ -512,15 +553,11 @@ class SearchesModel(QAbstractListModel):
         self.endResetModel()
 
     def remove_searches(self, rows):
-        rows = sorted(set(rows), reverse=True)
-        indices = [self.filtered_searches[row] for row in rows]
-        for row in rows:
-            self.beginRemoveRows(QModelIndex(), row, row)
-            del self.filtered_searches[row]
-            self.endRemoveRows()
+        indices = {self.filtered_searches[row] for row in frozenset(rows)}
         for idx in sorted(indices, reverse=True):
             del self.searches[idx]
         tprefs['saved_searches'] = self.searches
+        self.do_filter('')
 
 class EditSearch(QFrame):  # {{{
 
@@ -551,12 +588,12 @@ class EditSearch(QFrame):  # {{{
         h.addWidget(la), h.addWidget(n)
         l.addLayout(h)
 
-        self.find = f = QPlainTextEdit('', self)
+        self.find = f = SnippetTextEdit('', self)
         self.la2 = la = QLabel(_('&Find:'))
         la.setBuddy(f)
         l.addWidget(la), l.addWidget(f)
 
-        self.replace = r = QPlainTextEdit('', self)
+        self.replace = r = SnippetTextEdit('', self)
         self.la3 = la = QLabel(_('&Replace:'))
         la.setBuddy(r)
         l.addWidget(la), l.addWidget(r)
@@ -841,10 +878,9 @@ class SavedSearches(QWidget):
         d.setFrameStyle(QFrame.HLine)
         v.addWidget(d)
 
-        self.description = d = QLabel(' \n \n ')
-        d.setTextFormat(Qt.PlainText)
-        d.setWordWrap(True)
+        self.description = d = SearchDescription(self)
         mw.v.addWidget(d)
+        mw.v.setStretch(0, 10)
 
         self.ib = b = pb(_('&Import'), _('Import saved searches'))
         b.clicked.connect(self.import_searches)
@@ -1001,9 +1037,11 @@ class SavedSearches(QWidget):
     def remove_search(self):
         if self.editing_search:
             return
-        rows = {index.row() for index in self.searches.selectionModel().selectedIndexes()} - {-1}
-        self.model.remove_searches(rows)
-        self.show_details()
+        if confirm(_('Are you sure you want to permanently delete the selected saved searches?'),
+                   'confirm-remove-editor-saved-search', config_set=tprefs):
+            rows = {index.row() for index in self.searches.selectionModel().selectedIndexes()} - {-1}
+            self.model.remove_searches(rows)
+            self.show_details()
 
     def add_search(self):
         if self.editing_search:
@@ -1028,17 +1066,20 @@ class SavedSearches(QWidget):
         self.edit_search_widget.search_name.setFocus(Qt.OtherFocusReason)
 
     def show_details(self):
-        self.description.setText(' \n \n ')
+        self.description.set_text(' \n \n ')
         i = self.searches.currentIndex()
         if i.isValid():
-            search_index, search = i.data(Qt.UserRole)
+            try:
+                search_index, search = i.data(Qt.UserRole)
+            except TypeError:
+                return  # no saved searches
             cs = '✓' if search.get('case_sensitive', SearchWidget.DEFAULT_STATE['case_sensitive']) else '✗'
             da = '✓' if search.get('dot_all', SearchWidget.DEFAULT_STATE['dot_all']) else '✗'
             if search.get('mode', SearchWidget.DEFAULT_STATE['mode']) in ('regex', 'function'):
                 ts = _('(Case sensitive: {0} Dot All: {1})').format(cs, da)
             else:
                 ts = _('(Case sensitive: {0} [Normal search])').format(cs)
-            self.description.setText(_('{2} {3}\nFind: {0}\nReplace: {1}').format(
+            self.description.set_text(_('{2} {3}\nFind: {0}\nReplace: {1}').format(
                 search.get('find', ''), search.get('replace', ''), search.get('name', ''), ts))
 
     def import_searches(self):
@@ -1280,12 +1321,12 @@ def run_search(
                 'Currently selected text does not match the search query.'))
 
     def count_message(action, count, show_diff=False):
-        msg = _('%(action)s %(num)s occurrences of %(query)s' % dict(num=count, query=errfind, action=action))
+        msg = _('%(action)s %(num)s occurrences of %(query)s') % dict(num=count, query=errfind, action=action)
         if show_diff and count > 0:
             d = MessageBox(MessageBox.INFO, _('Searching done'), prepare_string_for_xml(msg), parent=gui_parent, show_copy_button=False)
             d.diffb = b = d.bb.addButton(_('See what &changed'), d.bb.ActionRole)
             b.setIcon(QIcon(I('diff.png'))), d.set_details(None), b.clicked.connect(d.accept)
-            b.clicked.connect(partial(show_current_diff, allow_revert=True))
+            b.clicked.connect(partial(show_current_diff, allow_revert=True), type=Qt.QueuedConnection)
             d.exec_()
         else:
             info_dialog(gui_parent, _('Searching done'), prepare_string_for_xml(msg), show=True)

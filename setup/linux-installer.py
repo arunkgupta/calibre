@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -12,23 +12,30 @@ import ssl, socket
 from contextlib import closing
 
 is64bit = platform.architecture()[0] == '64bit'
-url = 'http://status.calibre-ebook.com/dist/linux'+('64' if is64bit else '32')
-signature_url = 'http://calibre-ebook.com/downloads/signatures/%s.sha512'
-url = os.environ.get('CALIBRE_INSTALLER_LOCAL_URL', url)
+DLURL = 'https://calibre-ebook.com/dist/linux'+('64' if is64bit else '32')
+DLURL = os.environ.get('CALIBRE_INSTALLER_LOCAL_URL', DLURL)
 py3 = sys.version_info[0] > 2
-enc = getattr(sys.stdout, 'encoding', 'UTF-8') or 'utf-8'
+enc = getattr(sys.stdout, 'encoding', 'utf-8') or 'utf-8'
+if enc.lower() == 'ascii':
+    enc = 'utf-8'
 calibre_version = signature = None
 urllib = __import__('urllib.request' if py3 else 'urllib', fromlist=1)
-has_ssl_verify = hasattr(ssl, 'PROTOCOL_TLSv1_2') and sys.version_info[:3] > (2, 7, 8)
+has_ssl_verify = hasattr(ssl, 'create_default_context')
 
 if py3:
     unicode = str
     raw_input = input
     from urllib.parse import urlparse
     import http.client as httplib
+    encode_for_subprocess = lambda x:x
 else:
+    from future_builtins import map
     from urlparse import urlparse
     import httplib
+    def encode_for_subprocess(x):
+        if isinstance(x, unicode):
+            x = x.encode(enc)
+        return x
 
 class TerminalController:  # {{{
     BOL = ''             #: Move the cursor to the beginning of the line
@@ -221,11 +228,14 @@ class Reporter:  # {{{
         except ValueError:
             prints('Downloading', fname)
             self.pb = None
+        self.last_percent = 0
 
     def __call__(self, blocks, block_size, total_size):
         percent = (blocks*block_size)/float(total_size)
         if self.pb is None:
-            prints('Downloaded {0:%}'.format(percent))
+            if percent - self.last_percent > 0.05:
+                self.last_percent = percent
+                prints('Downloaded {0:%}'.format(percent))
         else:
             try:
                 self.pb.update(percent)
@@ -266,7 +276,7 @@ def do_download(dest):
         offset = os.path.getsize(dest)
 
     # Get content length and check if range is supported
-    rq = urllib.urlopen(url)
+    rq = urllib.urlopen(DLURL)
     headers = rq.info()
     size = int(headers['content-length'])
     accepts_ranges = headers.get('accept-ranges', None) == 'bytes'
@@ -291,8 +301,7 @@ def do_download(dest):
     prints('Downloaded %s bytes'%os.path.getsize(dest))
 
 def download_tarball():
-    ext = 'tar.bz2' if calibre_version.startswith('1.') else 'txz'
-    fname = 'calibre-%s-i686.%s'%(calibre_version, ext)
+    fname = 'calibre-%s-i686.%s'%(calibre_version, 'txz')
     if is64bit:
         fname = fname.replace('i686', 'x86_64')
     tdir = tempfile.gettempdir()
@@ -472,10 +481,7 @@ if has_ssl_verify:
     class HTTPSConnection(httplib.HTTPSConnection):
 
         def __init__(self, ssl_version, *args, **kwargs):
-            context = kwargs['context'] = ssl.SSLContext(ssl_version)
-            cf = kwargs.pop('cert_file')
-            context.load_verify_locations(cf)
-            context.verify_mode = ssl.CERT_REQUIRED
+            kwargs['context'] = ssl.create_default_context(cafile=kwargs.pop('cert_file'))
             httplib.HTTPSConnection.__init__(self, *args, **kwargs)
 else:
     class HTTPSConnection(httplib.HTTPSConnection):
@@ -503,10 +509,10 @@ else:
 
 CACERT = b'''\
 -----BEGIN CERTIFICATE-----
-MIIFzjCCA7agAwIBAgIJAPE9riMS7RUZMA0GCSqGSIb3DQEBBQUAMGIxCzAJBgNV
+MIIFzjCCA7agAwIBAgIJAKfuFL6Cvpn4MA0GCSqGSIb3DQEBCwUAMGIxCzAJBgNV
 BAYTAklOMRQwEgYDVQQIDAtNYWhhcmFzaHRyYTEPMA0GA1UEBwwGTXVtYmFpMRAw
 DgYDVQQKDAdjYWxpYnJlMRowGAYDVQQDDBFjYWxpYnJlLWVib29rLmNvbTAgFw0x
-NDAzMjUxMDU2MThaGA8yMTE0MDMwMTEwNTYxOFowYjELMAkGA1UEBhMCSU4xFDAS
+NTEyMjMwNTQ2NTlaGA8yMTE1MTEyOTA1NDY1OVowYjELMAkGA1UEBhMCSU4xFDAS
 BgNVBAgMC01haGFyYXNodHJhMQ8wDQYDVQQHDAZNdW1iYWkxEDAOBgNVBAoMB2Nh
 bGlicmUxGjAYBgNVBAMMEWNhbGlicmUtZWJvb2suY29tMIICIjANBgkqhkiG9w0B
 AQEFAAOCAg8AMIICCgKCAgEAtlbeAxQKyWhoxwaGqMh5ktRhqsLR6uzjuqWmB+Mm
@@ -523,18 +529,18 @@ VxuY7dgsiO7iUztYY0To5ZDExcHem7PEPUTyFii9LhbcSJeXDaqPFMxih+X0iqKv
 ni8CAwEAAaOBhDCBgTAxBgNVHREEKjAoghFjYWxpYnJlLWVib29rLmNvbYITKi5j
 YWxpYnJlLWVib29rLmNvbTAdBgNVHQ4EFgQURWqz5EOg5K1OrSKpleR+louVxsQw
 HwYDVR0jBBgwFoAURWqz5EOg5K1OrSKpleR+louVxsQwDAYDVR0TBAUwAwEB/zAN
-BgkqhkiG9w0BAQUFAAOCAgEANxijK3JQNZnrDYv7E5Ny17EtxV6ADggs8BIFLHrp
-tRISYw8HpFIrIF/MDbHgYGp/xkefGKGEHeS7rUPYwdAbKM0sfoxKXm5e8GGe9L5K
-pdG+ig1Ptm+Pae2Rcdj9RHKGmpAiKIF8a15l/Yj3jDVk06kx+lnT5fOePGhZBeuj
-duBZ2vP39rFfcBtTvFmoQRwfoa46fZEoWoXb3YwzBqIhBg9m80R+E79/HsRPwA4L
-pOvcFTr28jNp1OadgZ92sY9EYabes23amebz/P6IOjutqssIdrPSKqM9aphlGLXE
-7YDxS9nSfX165Aa8NIWO95ivdbZplisnQ3rQM4pIdk7Z8FPhHftMdhekDREMxYKX
-KXepi5tLyVnhETj+ifYBwqxZ024rlnpnHUWgjxRz5atKTAsbAgcxHOYTKMZoRAod
-BK7lvjZ7+C/cqUc2c9FSG/HxkrfMpJHJlzMsanTBJ1+MeUybeBtp5E7gdNALbfh/
-BJ4eWw7X7q2oKape+7+OMX7aKAIysM7d2iVRuBofLBxOqzY6mzP8+Ro8zIgwFUeh
-r6pbEa8P2DXnuZ+PtcMiClYKuSLlf6xRRDMnHCxvsu1zA/Ga3vZ6g0bd487DIsGP
-tXHCYXttMGNxZDNVKS6rkrY2sT5xnJwvHwWmiooUZmSUFUdpqsvV5r9v89NMQ87L
-gNA=
+BgkqhkiG9w0BAQsFAAOCAgEAS1+Jx0VyTrEFUQ5jEIx/7WrL4GDnzxjeXWJTyKSk
+YqcOvXZpwwrTHJSGHj7MpCqWIzQnHxICBFlUEVcb1g1UPvNB5OY69eLjlYdwfOK9
+bfp/KnLCsn7Pf4UCATRslX9J1LV6r17X2ONWWmSutDeGP1azXVxwFsogvvqwPHCs
+nlfvQycUcd4HWIZWBJ1n4Ry6OwdpFuHktRVtNtTlD34KUjzcN2GCA08Ur+1eiA9D
+/Oru1X4hfA3gbiAlGJ/+3AQw0oYS0IEW1HENurkIDNs98CXTiau9OXRECgGjE3hC
+viECb4beyhEOH5y1dQJZEynwvSepFG8wDJWmkVN7hMrfbZF4Ec0BmsJpbuq5GrdV
+cXUXJbLrnADFV9vkciLb3pl7gAmHi1T19i/maWMiYqIAh7Ezi/h6ufGbPiG+vfLt
+f4ywTKQeQKAamBW4P2oFgcmlPDlDeVFWdkF1aC0WFct5/R7Fea0D2bOVt52zm3v3
+Ghni3NYEZzXHf08c8tzXZmM1Q39sSS1vn2B9PgiYj87Xg9Fxn1trKFdsiry1F2Qx
+qDq1u+xTdjPKwVVB1zd5g3MM/YYTVRhuH2AZU/Z4qX8DAf9ESqLqUpEOpyvLkX3r
+gENtRgsmhjlf/Qwymuz8nnzJD5c4TgCicVjPNArprVtmyfOXLVXJLC+KpkzTxvdr
+nR0=
 -----END CERTIFICATE-----
 '''
 
@@ -597,12 +603,12 @@ def get_https_resource_securely(url, timeout=60, max_redirects=5, ssl_version=No
 # }}}
 
 def extract_tarball(raw, destdir):
-    c = 'j' if raw.startswith(b'BZh') else 'J'
     prints('Extracting application files...')
     with open('/dev/null', 'w') as null:
-        p = subprocess.Popen(['tar', 'x%sof' % c, '-', '-C', destdir], stdout=null, stdin=subprocess.PIPE, close_fds=True,
-            preexec_fn=lambda:
-                        signal.signal(signal.SIGPIPE, signal.SIG_DFL))
+        p = subprocess.Popen(
+            list(map(encode_for_subprocess, ['tar', 'xJof', '-', '-C', destdir])),
+            stdout=null, stdin=subprocess.PIPE, close_fds=True, preexec_fn=lambda:
+            signal.signal(signal.SIGPIPE, signal.SIG_DFL))
         p.stdin.write(raw)
         p.stdin.close()
         if p.wait() != 0:
@@ -612,7 +618,7 @@ def extract_tarball(raw, destdir):
 def get_tarball_info():
     global signature, calibre_version
     print ('Downloading tarball signature securely...')
-    raw = get_https_resource_securely('https://status.calibre-ebook.com/tarball-info/' +
+    raw = get_https_resource_securely('https://code.calibre-ebook.com/tarball-info/' +
                                       ('x86_64' if is64bit else 'i686'))
     signature, calibre_version = raw.rpartition(b'@')[::2]
     if not signature or not calibre_version:
@@ -634,15 +640,15 @@ def download_and_extract(destdir):
 def check_version():
     global calibre_version
     if calibre_version == '%version':
-        calibre_version = urllib.urlopen('http://status.calibre-ebook.com/latest').read()
+        calibre_version = urllib.urlopen('http://code.calibre-ebook.com/latest').read()
 
-def main(install_dir=None, isolated=False, bin_dir=None, share_dir=None):
+def run_installer(install_dir, isolated, bin_dir, share_dir):
     destdir = os.path.abspath(os.path.expanduser(install_dir or '/opt'))
     if destdir == '/usr/bin':
         prints(destdir, 'is not a valid install location. Choose', end='')
         prints('a location like /opt or /usr/local')
         return 1
-    destdir = os.path.join(destdir, 'calibre')
+    destdir = os.path.realpath(os.path.join(destdir, 'calibre'))
     if os.path.exists(destdir):
         if not os.path.isdir(destdir):
             prints(destdir, 'exists and is not a directory. Choose a location like /opt or /usr/local')
@@ -657,11 +663,14 @@ def main(install_dir=None, isolated=False, bin_dir=None, share_dir=None):
             pi.extend(['--bindir', bin_dir])
         if share_dir is not None:
             pi.extend(['--sharedir', share_dir])
-        subprocess.call(pi, shell=len(pi) == 1)
+        subprocess.call(pi)
         prints('Run "calibre" to start calibre')
     else:
         prints('Run "%s/calibre" to start calibre' % destdir)
     return 0
+
+def main(install_dir=None, isolated=False, bin_dir=None, share_dir=None):
+    run_installer(install_dir, isolated, bin_dir, share_dir)
 
 try:
     __file__

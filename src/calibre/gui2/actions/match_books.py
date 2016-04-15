@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -17,7 +17,7 @@ class MatchBookAction(InterfaceAction):
     action_spec = (_('Match book to library'), 'book.png',
             _('Match this book to a book in the library'),
             ())
-    dont_add_to = frozenset(['menubar', 'toolbar', 'context-menu', 'toolbar-child'])
+    dont_add_to = frozenset(['menubar', 'toolbar', 'context-menu', 'toolbar-child', 'context-menu-cover-browser'])
     action_type = 'current'
 
     def genesis(self):

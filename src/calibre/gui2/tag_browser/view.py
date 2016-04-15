@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -42,13 +42,14 @@ class TagDelegate(QStyledItemDelegate):  # {{{
             painter.restore()
         if item.type != TagTreeItem.TAG:
             return
-        if (item.tag.state == 0 and config['show_avg_rating'] and
-                item.tag.avg_rating is not None):
+        if item.tag.state == 0 and config['show_avg_rating']:
+            rating = item.average_rating
+            if rating is None:
+                return
             r = style.subElementRect(style.SE_ItemViewItemDecoration,
                     option, widget)
             icon = option.icon
             painter.save()
-            rating = item.tag.avg_rating
             nr = r.adjusted(0, 0, 0, 0)
             nr.setBottom(r.bottom()-int(r.height()*(rating/5.0)))
             painter.setClipRect(nr)
@@ -84,7 +85,7 @@ class TagsView(QTreeView):  # {{{
     search_item_renamed     = pyqtSignal()
     drag_drop_finished      = pyqtSignal(object)
     restriction_error       = pyqtSignal()
-    tag_item_delete         = pyqtSignal(object, object, object)
+    tag_item_delete         = pyqtSignal(object, object, object, object)
 
     def __init__(self, parent=None):
         QTreeView.__init__(self, parent=None)
@@ -208,7 +209,7 @@ class TagsView(QTreeView):  # {{{
 
     def user_categories_edited(self, user_cats, nkey):
         state_map = self.get_state()[1]
-        self.db.prefs.set('user_categories', user_cats)
+        self.db.new_api.set_pref('user_categories', user_cats)
         self._model.rebuild_node_tree(state_map=state_map)
         p = self._model.find_category_node('@'+nkey)
         self.show_item_at_path(p)
@@ -279,6 +280,11 @@ class TagsView(QTreeView):  # {{{
         joiner = ' and ' if self.match_all else ' or '
         return joiner.join(tokens)
 
+    def toggle_current_index(self):
+        ci = self.currentIndex()
+        if ci.isValid():
+            self.toggle(ci)
+
     def toggle(self, index):
         self._toggle(index, None)
 
@@ -297,7 +303,8 @@ class TagsView(QTreeView):  # {{{
             self.clear()
 
     def context_menu_handler(self, action=None, category=None,
-                             key=None, index=None, search_state=None):
+                             key=None, index=None, search_state=None,
+                             use_vl=None):
         if not action:
             return
         try:
@@ -328,11 +335,22 @@ class TagsView(QTreeView):  # {{{
                 self.recount()
                 return
 
-            if action == 'edit_item':
+            if action == 'edit_item_no_vl':
+                item = self.model().get_node(index)
+                item.use_vl = False
                 self.edit(index)
                 return
-            if action == 'delete_item':
-                self.tag_item_delete.emit(key, index.id, index.original_name)
+            if action == 'edit_item_in_vl':
+                item = self.model().get_node(index)
+                item.use_vl = True
+                self.edit(index)
+                return
+            if action == 'delete_item_in_vl':
+                self.tag_item_delete.emit(key, index.id, index.original_name,
+                                          self.model().get_book_ids_to_use())
+                return
+            if action == 'delete_item_no_vl':
+                self.tag_item_delete.emit(key, index.id, index.original_name, None)
                 return
             if action == 'open_editor':
                 self.tags_list_edit.emit(category, key)
@@ -396,7 +414,7 @@ class TagsView(QTreeView):  # {{{
                     gprefs['tags_browser_partition_method'] = category
             elif action == 'defaults':
                 self.hidden_categories.clear()
-            self.db.prefs.set('tag_browser_hidden_categories', list(self.hidden_categories))
+            self.db.new_api.set_pref('tag_browser_hidden_categories', list(self.hidden_categories))
             if reset_filter_categories:
                 self._model.set_categories_filter(None)
             self._model.rebuild_node_tree()
@@ -441,15 +459,26 @@ class TagsView(QTreeView):  # {{{
                     # the possibility of renaming that item.
                     if tag.is_editable:
                         # Add the 'rename' items
+                        if self.model().get_in_vl():
+                            self.context_menu.addAction(self.rename_icon,
+                                                    _('Rename %s in virtual library')%display_name(tag),
+                                    partial(self.context_menu_handler, action='edit_item_in_vl',
+                                            index=index))
                         self.context_menu.addAction(self.rename_icon,
-                                                    _('Rename %s')%display_name(tag),
-                            partial(self.context_menu_handler, action='edit_item',
-                                    index=index))
+                                                _('Rename %s')%display_name(tag),
+                                partial(self.context_menu_handler, action='edit_item_no_vl',
+                                        index=index))
                         if key in ('tags', 'series', 'publisher') or \
                                 self._model.db.field_metadata.is_custom_field(key):
+                            if self.model().get_in_vl():
+                                self.context_menu.addAction(self.delete_icon,
+                                                    _('Delete %s in virtual library')%display_name(tag),
+                                partial(self.context_menu_handler, action='delete_item_in_vl',
+                                    key=key, index=tag))
+
                             self.context_menu.addAction(self.delete_icon,
                                                     _('Delete %s')%display_name(tag),
-                                partial(self.context_menu_handler, action='delete_item',
+                                partial(self.context_menu_handler, action='delete_item_no_vl',
                                     key=key, index=tag))
                         if key == 'authors':
                             self.context_menu.addAction(_('Edit sort for %s')%display_name(tag),
@@ -463,7 +492,7 @@ class TagsView(QTreeView):  # {{{
                         # to a user category'
                         m = self.context_menu.addMenu(self.user_category_icon,
                                         _('Add %s to user category')%display_name(tag))
-                        nt = self.model().category_node_tree
+                        nt = self.model().user_category_node_tree
                         def add_node_tree(tree_dict, m, path):
                             p = path[:]
                             for k in sorted(tree_dict.keys(), key=sort_key):
@@ -482,7 +511,7 @@ class TagsView(QTreeView):  # {{{
                     elif key == 'search' and tag.is_searchable:
                         self.context_menu.addAction(self.rename_icon,
                                                     _('Rename %s')%display_name(tag),
-                            partial(self.context_menu_handler, action='edit_item',
+                            partial(self.context_menu_handler, action='edit_item_no_vl',
                                     index=index))
                         self.context_menu.addAction(self.delete_icon,
                                 _('Delete search %s')%display_name(tag),
@@ -512,7 +541,7 @@ class TagsView(QTreeView):  # {{{
                     if item.can_be_edited:
                         self.context_menu.addAction(self.rename_icon,
                             _('Rename %s')%item.py_name,
-                            partial(self.context_menu_handler, action='edit_item',
+                            partial(self.context_menu_handler, action='edit_item_no_vl',
                                     index=index))
                     self.context_menu.addAction(self.user_category_icon,
                             _('Add sub-category to %s')%item.py_name,
@@ -616,9 +645,20 @@ class TagsView(QTreeView):  # {{{
             da.setToolTip('*')
             pa.setToolTip('*')
 
+        if index.isValid() and self.model().rowCount(index) > 0:
+            self.context_menu.addSeparator()
+            self.context_menu.addAction(_('E&xpand all children'), partial(self.expand_node_and_descendants, index))
+
         if not self.context_menu.isEmpty():
             self.context_menu.popup(self.mapToGlobal(point))
         return True
+
+    def expand_node_and_descendants(self, index):
+        if not index.isValid():
+            return
+        self.expand(index)
+        for r in xrange(self.model().rowCount(index)):
+            self.expand_node_and_descendants(index.child(r, 0))
 
     def collapse_menu_hovered(self, action):
         tip = action.toolTip()

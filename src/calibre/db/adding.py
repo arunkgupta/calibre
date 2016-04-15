@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -6,7 +6,7 @@ from __future__ import (unicode_literals, division, absolute_import,
 __license__ = 'GPL v3'
 __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import os
+import os, time, re
 from collections import defaultdict
 from future_builtins import map
 
@@ -17,12 +17,38 @@ def splitext(path):
     return key, ext[1:].lower()
 
 def formats_ok(formats):
-    if formats and (len(formats) > 1 or tuple(formats.iterkeys()) != ('opf',)):
-        return True
-    return False
+    return len(formats) > 0
 
 def path_ok(path):
     return not os.path.isdir(path) and os.access(path, os.R_OK)
+
+def compile_glob(pat):
+    import fnmatch
+    return re.compile(fnmatch.translate(pat), flags=re.I)
+
+def compile_rule(rule):
+    mt = rule['match_type']
+    if 'with' in mt:
+        q = icu_lower(rule['query'])
+        if 'startswith' in mt:
+            func = lambda filename: icu_lower(filename).startswith(q)
+        else:
+            func = lambda filename: icu_lower(filename).endswith(q)
+    elif 'glob' in mt:
+        q = compile_glob(rule['query'])
+        func  = lambda filename: q.match(filename) is not None
+    else:
+        q = re.compile(rule['query'])
+        func  = lambda filename: q.match(filename) is not None
+    ans = func
+    if mt.startswith('not_'):
+        ans = lambda filename: not func(filename)
+    return ans, rule['action'] == 'add'
+
+def filter_filename(compiled_rules, filename):
+    for q, action in compiled_rules:
+        if q(filename):
+            return action
 
 _metadata_extensions = None
 
@@ -34,26 +60,41 @@ def metadata_extensions():
         _metadata_extensions =  frozenset(map(unicode, BOOK_EXTENSIONS)) | {'opf'}
     return _metadata_extensions
 
-def listdir(root):
-    for path in os.listdir(root):
-        yield os.path.abspath(os.path.join(root, path))
+def listdir(root, sort_by_mtime=False):
+    items = (os.path.join(root, x) for x in os.listdir(root))
+    if sort_by_mtime:
+        def safe_mtime(x):
+            try:
+                return os.path.getmtime(x)
+            except EnvironmentError:
+                return time.time()
+        items = sorted(items, key=safe_mtime)
 
-def find_books_in_directory(dirpath, single_book_per_directory):
+    for path in items:
+        if path_ok(path):
+            yield path
+
+def allow_path(path, ext, compiled_rules):
+    ans = filter_filename(compiled_rules, os.path.basename(path))
+    if ans is None:
+        ans = ext in metadata_extensions()
+    return ans
+
+def find_books_in_directory(dirpath, single_book_per_directory, compiled_rules=(), listdir_impl=listdir):
     dirpath = os.path.abspath(dirpath)
-    book_extentions = metadata_extensions()
     if single_book_per_directory:
         formats = {}
-        for path in listdir(dirpath):
+        for path in listdir_impl(dirpath):
             key, ext = splitext(path)
-            if ext in book_extentions and path_ok(path):
+            if allow_path(path, ext, compiled_rules):
                 formats[ext] = path
         if formats_ok(formats):
             yield list(formats.itervalues())
     else:
         books = defaultdict(dict)
-        for path in listdir(dirpath):
+        for path in listdir_impl(dirpath, sort_by_mtime=True):
             key, ext = splitext(path)
-            if ext in book_extentions and path_ok(path):
+            if allow_path(path, ext, compiled_rules):
                 books[icu_lower(key) if isinstance(key, unicode) else key.lower()][ext] = path
 
         for formats in books.itervalues():
@@ -61,11 +102,11 @@ def find_books_in_directory(dirpath, single_book_per_directory):
                 yield list(formats.itervalues())
 
 def import_book_directory_multiple(db, dirpath, callback=None,
-        added_ids=None):
+        added_ids=None, compiled_rules=()):
     from calibre.ebooks.metadata.meta import metadata_from_formats
 
     duplicates = []
-    for formats in find_books_in_directory(dirpath, False):
+    for formats in find_books_in_directory(dirpath, False, compiled_rules=compiled_rules):
         mi = metadata_from_formats(formats)
         if mi.title is None:
             continue
@@ -80,11 +121,12 @@ def import_book_directory_multiple(db, dirpath, callback=None,
                 break
     return duplicates
 
-def import_book_directory(db, dirpath, callback=None, added_ids=None):
+def import_book_directory(db, dirpath, callback=None, added_ids=None, compiled_rules=()):
     from calibre.ebooks.metadata.meta import metadata_from_formats
     dirpath = os.path.abspath(dirpath)
-    formats = find_books_in_directory(dirpath, True)
-    formats = list(formats)[0]
+    formats = None
+    for formats in find_books_in_directory(dirpath, True, compiled_rules=compiled_rules):
+        break
     if not formats:
         return
     mi = metadata_from_formats(formats)
@@ -99,14 +141,14 @@ def import_book_directory(db, dirpath, callback=None, added_ids=None):
         callback(mi.title)
 
 def recursive_import(db, root, single_book_per_directory=True,
-        callback=None, added_ids=None):
+        callback=None, added_ids=None, compiled_rules=()):
     root = os.path.abspath(root)
     duplicates  = []
     for dirpath in os.walk(root):
         res = (import_book_directory(db, dirpath[0], callback=callback,
-            added_ids=added_ids) if single_book_per_directory else
+            added_ids=added_ids, compiled_rules=compiled_rules) if single_book_per_directory else
             import_book_directory_multiple(db, dirpath[0],
-                callback=callback, added_ids=added_ids))
+                callback=callback, added_ids=added_ids, compiled_rules=compiled_rules))
         if res is not None:
             duplicates.extend(res)
         if callable(callback):
@@ -114,7 +156,7 @@ def recursive_import(db, root, single_book_per_directory=True,
                 break
     return duplicates
 
-def add_catalog(cache, path, title):
+def add_catalog(cache, path, title, dbapi=None):
     from calibre.ebooks.metadata.book.base import Metadata
     from calibre.ebooks.metadata.meta import get_metadata
     from calibre.utils.date import utcnow
@@ -143,11 +185,11 @@ def add_catalog(cache, path, title):
                 new_book_added = True
             else:
                 cache._set_metadata(db_id, mi)
-        cache.add_format(db_id, fmt, stream)  # Cant keep write lock since post-import hooks might run
+        cache.add_format(db_id, fmt, stream, dbapi=dbapi)  # Cant keep write lock since post-import hooks might run
 
     return db_id, new_book_added
 
-def add_news(cache, path, arg):
+def add_news(cache, path, arg, dbapi=None):
     from calibre.ebooks.metadata.meta import get_metadata
     from calibre.utils.date import utcnow
 
@@ -174,7 +216,7 @@ def add_news(cache, path, arg):
             mi.timestamp = utcnow()
 
         db_id = cache._create_book_entry(mi, apply_import_tags=False)
-    cache.add_format(db_id, fmt, stream)  # Cant keep write lock since post-import hooks might run
+    cache.add_format(db_id, fmt, stream, dbapi=dbapi)  # Cant keep write lock since post-import hooks might run
 
     if not hasattr(path, 'read'):
         stream.close()

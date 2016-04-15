@@ -234,7 +234,7 @@ class ANDROID(USBMS):
             'PMP5097C', 'MASS', 'NOVO7', 'ZEKI', 'COBY', 'SXZ', 'USB_2.0',
             'COBY_MID', 'VS', 'AINOL', 'TOPWISE', 'PAD703', 'NEXT8D12',
             'MEDIATEK', 'KEENHI', 'TECLAST', 'SURFTAB', 'XENTA', 'OBREEY_S',
-            'SURFTAB_', 'ONYX-INT', 'IMCOSYS', 'SURFPAD3',
+            'SURFTAB_', 'ONYX-INT', 'IMCOSYS', 'SURFPAD3', 'GRAMMATA',
     ]
     WINDOWS_MAIN_MEM = ['ANDROID_PHONE', 'A855', 'A853', 'A953', 'INC.NEXUS_ONE',
             '__UMS_COMPOSITE', '_MB200', 'MASS_STORAGE', '_-_CARD', 'SGH-I897',
@@ -258,7 +258,7 @@ class ANDROID(USBMS):
             'NOVO7', 'MB526', '_USB#WYK7MSF8KE', 'TABLET_PC', 'F', 'MT65XX_MS',
             'ICS', 'E400', '__FILE-STOR_GADG', 'ST80208-1', 'GT-S5660M_CARD', 'XT894', '_USB',
             'PROD_TAB13-201', 'URFPAD2', 'MID1126', 'ST10216-1', 'S5360L_CARD', 'IDEATAB_A1000-F',
-            'LBOOX', 'LTAGUS', 'IMCOV6L', '_101', 'LPAPYRE_624',
+            'LBOOX', 'LTAGUS', 'IMCOV6L', '_101', 'LPAPYRE_624', 'S.L.',
     ]
     WINDOWS_CARD_A_MEM = ['ANDROID_PHONE', 'GT-I9000_CARD', 'SGH-I897',
             'FILE-STOR_GADGET', 'SGH-T959_CARD', 'SGH-T959', 'SAMSUNG_ANDROID', 'GT-P1000_CARD',
@@ -392,7 +392,7 @@ class WEBOS(USBMS):
         if coverdata and coverdata[2]:
             cover = Image.open(cStringIO.StringIO(coverdata[2]))
         else:
-            coverdata = open(I('library.png'), 'rb').read()
+            coverdata = lopen(I('library.png'), 'rb').read()
 
             cover = Image.new('RGB', (120,160), 'black')
             im = Image.open(cStringIO.StringIO(coverdata))
@@ -409,7 +409,7 @@ class WEBOS(USBMS):
         cover.save(data, 'JPEG')
         coverdata = data.getvalue()
 
-        with open(os.path.join(path, 'coverCache', filename + '-medium.jpg'), 'wb') as coverfile:
+        with lopen(os.path.join(path, 'coverCache', filename + '-medium.jpg'), 'wb') as coverfile:
             coverfile.write(coverdata)
             fsync(coverfile)
 
@@ -417,7 +417,7 @@ class WEBOS(USBMS):
         if coverdata and coverdata[2]:
             cover = Image.open(cStringIO.StringIO(coverdata[2]))
         else:
-            coverdata = open(I('library.png'), 'rb').read()
+            coverdata = lopen(I('library.png'), 'rb').read()
 
             cover = Image.new('RGB', (52,69), 'black')
             im = Image.open(cStringIO.StringIO(coverdata))
@@ -432,7 +432,7 @@ class WEBOS(USBMS):
         cover2.save(data, 'JPEG')
         coverdata = data.getvalue()
 
-        with open(os.path.join(path, 'coverCache', filename +
+        with lopen(os.path.join(path, 'coverCache', filename +
             '-small.jpg'), 'wb') as coverfile:
             coverfile.write(coverdata)
             fsync(coverfile)

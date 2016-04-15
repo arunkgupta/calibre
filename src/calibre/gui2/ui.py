@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement
 
@@ -21,7 +21,8 @@ from PyQt5.Qt import (
     QApplication, QSystemTrayIcon)
 
 from calibre import prints, force_unicode, detect_ncpus
-from calibre.constants import __appname__, isosx, filesystem_encoding, DEBUG
+from calibre.constants import (
+        __appname__, isosx, iswindows, filesystem_encoding, DEBUG)
 from calibre.utils.config import prefs, dynamic
 from calibre.utils.ipc.pool import Pool
 from calibre.db.legacy import LibraryDatabase
@@ -48,6 +49,7 @@ from calibre.gui2.proceed import ProceedQuestion
 from calibre.gui2.dialogs.message_box import JobError
 from calibre.gui2.job_indicator import Pointer
 from calibre.gui2.dbus_export.widgets import factory
+from calibre.gui2.open_with import register_keyboard_shortcuts
 from calibre.library import current_library_name
 
 class Listener(Thread):  # {{{
@@ -86,7 +88,7 @@ _gui = None
 def get_gui():
     return _gui
 
-def add_quick_start_guide(library_view, db_images):
+def add_quick_start_guide(library_view, refresh_cover_browser=None):
     from calibre.ebooks.metadata.meta import get_metadata
     from calibre.ebooks import calibre_cover
     from calibre.utils.zipfile import safe_replace
@@ -111,8 +113,8 @@ def add_quick_start_guide(library_view, db_images):
     library_view.model().add_books([tmp.name], ['epub'], [mi])
     os.remove(tmp.name)
     library_view.model().books_added(1)
-    if hasattr(db_images, 'reset'):
-        db_images.reset()
+    if refresh_cover_browser is not None:
+        refresh_cover_browser()
     if library_view.model().rowCount(None) < 3:
         library_view.resizeColumnsToContents()
 
@@ -208,7 +210,7 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
         else:
             stmap[st.name] = st
 
-    def initialize(self, library_path, db, listener, actions, show_gui=True, splash_screen=None):
+    def initialize(self, library_path, db, listener, actions, show_gui=True):
         opts = self.opts
         self.preferences_action, self.quit_action = actions
         self.library_path = library_path
@@ -259,6 +261,8 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
             self.system_tray_icon = factory(app_id='com.calibre-ebook.gui').create_system_tray_icon(parent=self, title='calibre')
         if self.system_tray_icon is not None:
             self.system_tray_icon.setIcon(QIcon(I('lt.png')))
+            if not (iswindows or isosx):
+                self.system_tray_icon.setIcon(QIcon.fromTheme('calibre-gui', QIcon(I('lt.png'))))
             self.system_tray_icon.setToolTip(self.jobs_button.tray_tooltip())
             self.system_tray_icon.setVisible(True)
             self.jobs_button.tray_tooltip_updated.connect(self.system_tray_icon.setToolTip)
@@ -268,7 +272,9 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
         self.toggle_to_tray_action = self.system_tray_menu.addAction(QIcon(I('page.png')), '')
         self.toggle_to_tray_action.triggered.connect(self.system_tray_icon_activated)
         self.system_tray_menu.addAction(self.donate_action)
-        self.donate_button.setDefaultAction(self.donate_action)
+        self.donate_button.clicked.connect(self.donate_action.trigger)
+        self.donate_button.setToolTip(self.donate_action.text().replace('&', ''))
+        self.donate_button.setIcon(self.donate_action.icon())
         self.donate_button.setStatusTip(self.donate_button.toolTip())
         self.eject_action = self.system_tray_menu.addAction(
                 QIcon(I('eject.png')), _('&Eject connected device'))
@@ -334,8 +340,6 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
 
         if show_gui:
             self.show()
-        if splash_screen is not None:
-            splash_screen.hide()
 
         if self.system_tray_icon is not None and self.system_tray_icon.isVisible() and opts.start_in_tray:
             self.hide_windows()
@@ -343,7 +347,7 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
                 self.iactions['Choose Library'].count_changed)
         if not gprefs.get('quick_start_guide_added', False):
             try:
-                add_quick_start_guide(self.library_view, getattr(self, 'db_images', None))
+                add_quick_start_guide(self.library_view)
             except:
                 import traceback
                 traceback.print_exc()
@@ -406,6 +410,7 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
         self.set_current_library_information(current_library_name(), db.library_id,
                                              db.field_metadata)
 
+        register_keyboard_shortcuts()
         self.keyboard.finalize()
         self.auto_adder = AutoAdder(gprefs['auto_add_path'], self)
 
@@ -415,15 +420,18 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
         gc.collect()
 
         if show_gui and self.gui_debug is not None:
-            info_dialog(self, _('Debug mode'), '<p>' +
-                    _('You have started calibre in debug mode. After you '
-                        'quit calibre, the debug log will be available in '
-                        'the file: %s<p>The '
-                        'log will be displayed automatically.')%self.gui_debug, show=True)
+            QTimer.singleShot(10, self.show_gui_debug_msg)
 
         self.iactions['Connect Share'].check_smartdevice_menus()
         QTimer.singleShot(1, self.start_smartdevice)
         QTimer.singleShot(100, self.update_toggle_to_tray_action)
+
+    def show_gui_debug_msg(self):
+        info_dialog(self, _('Debug mode'), '<p>' +
+                _('You have started calibre in debug mode. After you '
+                    'quit calibre, the debug log will be available in '
+                    'the file: %s<p>The '
+                    'log will be displayed automatically.')%self.gui_debug, show=True)
 
     def esc(self, *args):
         self.clear_button.click()
@@ -566,8 +574,7 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
                 files = [os.path.abspath(p) for p in argv[1:] if not os.path.isdir(p) and os.access(p, os.R_OK)]
                 if files:
                     self.iactions['Add Books'].add_filesystem_book(files)
-            self.setWindowState(self.windowState() &
-                    ~Qt.WindowMinimized|Qt.WindowActive)
+            self.setWindowState(self.windowState() & ~Qt.WindowMinimized|Qt.WindowActive)
             self.show_windows()
             self.raise_()
             self.activateWindow()
@@ -722,15 +729,17 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
         if location == 'library':
             self.virtual_library_menu.setEnabled(True)
             self.highlight_only_button.setEnabled(True)
+            self.vl_tabs.setEnabled(True)
         else:
             self.virtual_library_menu.setEnabled(False)
             self.highlight_only_button.setEnabled(False)
+            self.vl_tabs.setEnabled(False)
             # Reset the view in case something changed while it was invisible
             self.current_view().reset()
         self.set_number_of_books_shown()
         self.update_status_bar()
 
-    def job_exception(self, job, dialog_title=_('Conversion Error')):
+    def job_exception(self, job, dialog_title=_('Conversion Error'), retry_func=None):
         if not hasattr(self, '_modeless_dialogs'):
             self._modeless_dialogs = []
         minz = self.is_minimized_to_tray
@@ -812,7 +821,7 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
         if not minz:
             self.job_error_dialog.show_error(dialog_title,
                     _('<b>Failed</b>')+': '+unicode(job.description),
-                    det_msg=job.details)
+                    det_msg=job.details, retry_func=retry_func)
 
     def read_settings(self):
         geometry = config['main_window_geometry']
@@ -852,6 +861,12 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
 
             if not question_dialog(self, _('Active jobs'), msg):
                 return False
+
+        if self.proceed_question.questions:
+            msg = _('There are library updates waiting. Are you sure you want to quit?')
+            if not question_dialog(self, _('Library Updates Waiting'), msg):
+                return False
+
         from calibre.db.delete_service import has_jobs
         if has_jobs():
             msg = _('Some deleted books are still being moved to the Recycle '
@@ -863,7 +878,15 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
         return True
 
     def shutdown(self, write_settings=True):
+        self.show_shutdown_message()
+
+        from calibre.customize.ui import has_library_closed_plugins
+        if has_library_closed_plugins():
+            self.show_shutdown_message(
+                _('Running database shutdown plugins. This could take a few seconds...'))
+
         self.grid_view.shutdown()
+        db = None
         try:
             db = self.library_view.model().db
             cf = db.clean
@@ -873,7 +896,7 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
             cf()
             # Save the current field_metadata for applications like calibre2opds
             # Goes here, because if cf is valid, db is valid.
-            db.prefs['field_metadata'] = db.field_metadata.all_metadata()
+            db.new_api.set_pref('field_metadata', db.field_metadata.all_metadata())
             db.commit_dirty_cache()
             db.prefs.write_serialized(prefs['library_path'])
         for action in self.iactions.values():
@@ -893,10 +916,17 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
         if mb is not None:
             mb.stop()
 
-        self.hide_windows()
+        if db is not None:
+            db.close()
+
         try:
             try:
                 if self.content_server is not None:
+                    # If the content server has any sockets being closed then
+                    # this can take quite a long time (minutes). Tell the user that it is
+                    # happening.
+                    self.show_shutdown_message(
+                        _('Shutting down the content server. This could take a while ...'))
                     s = self.content_server
                     self.content_server = None
                     s.exit()
@@ -904,15 +934,15 @@ class Main(MainWindow, MainWindowMixin, DeviceMixin, EmailMixin,  # {{{
                 pass
         except KeyboardInterrupt:
             pass
+        self.hide_windows()
+        # Do not report any errors that happen after the shutdown
+        sys.excepthook = sys.__excepthook__
         if self._spare_pool is not None:
             self._spare_pool.shutdown()
         from calibre.db.delete_service import shutdown
         shutdown()
         time.sleep(2)
         self.istores.join()
-        self.hide_windows()
-        # Do not report any errors that happen after the shutdown
-        sys.excepthook = sys.__excepthook__
         return True
 
     def run_wizard(self, *args):

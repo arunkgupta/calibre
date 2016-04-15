@@ -3,7 +3,7 @@ __license__ = 'GPL 3'
 __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
-import os, re, sys, shutil, pprint
+import os, re, sys, shutil, pprint, json
 from functools import partial
 
 from calibre.customize.conversion import OptionRecommendation, DummyReporter
@@ -63,6 +63,7 @@ class CompositeProgressReporter(object):
 ARCHIVE_FMTS = ('zip', 'rar', 'oebzip')
 
 class Plumber(object):
+
     '''
     The `Plumber` manages the conversion pipeline. An UI should call the methods
     :method:`merge_ui_recommendations` and then :method:`run`. The plumber will
@@ -134,7 +135,7 @@ OptionRecommendation(name='output_profile',
             choices=[x.short_name for x in output_profiles()],
             help=_('Specify the output profile. The output profile '
                    'tells the conversion system how to optimize the '
-                   'created document for the specified device. In some cases, '
+                   'created document for the specified device (such as by resizing images for the device screen size). In some cases, '
                    'an output profile can be used to optimize the output for a particular device, but this is rarely necessary. '
                    'Choices are:') +
                            ', '.join([x.short_name for x in output_profiles()])
@@ -202,7 +203,7 @@ OptionRecommendation(name='embed_font_family',
             'specifies its own fonts, they may override this base font. '
             'You can use the filter style information option to remove fonts from the '
             'input document. Note that font embedding only works '
-            'with some output formats, principally EPUB and AZW3.')
+            'with some output formats, principally EPUB, AZW3 and DOCX.')
         ),
 
 OptionRecommendation(name='embed_all_fonts',
@@ -212,7 +213,7 @@ OptionRecommendation(name='embed_all_fonts',
             'but not already embedded. This will search your system for the '
             'fonts, and if found, they will be embedded. Embedding will only work '
             'if the format you are converting to supports embedded fonts, such as '
-            'EPUB, AZW3 or PDF. Please ensure that you have the proper license for embedding '
+            'EPUB, AZW3, DOCX or PDF. Please ensure that you have the proper license for embedding '
             'the fonts used in this document.'
         )),
 
@@ -352,6 +353,12 @@ OptionRecommendation(name='extra_css',
                 'This CSS will be appended to the style rules from '
                 'the source file, so it can be used to override those '
                 'rules.')
+        ),
+
+OptionRecommendation(name='transform_css_rules',
+            recommended_value=None, level=OptionRecommendation.LOW,
+            help=_('Rules for transforming the styles in this book. These'
+                   ' rules are applied after all other CSS processing is done.')
         ),
 
 OptionRecommendation(name='filter_css',
@@ -1029,6 +1036,15 @@ OptionRecommendation(name='search_replace',
 
         if hasattr(self.opts, 'lrf') and self.output_plugin.file_type == 'lrf':
             self.opts.lrf = True
+        if self.input_fmt == 'azw4' and self.output_plugin.file_type == 'pdf':
+            self.ui_reporter(0.01, 'AZW4 files are simply wrappers around PDF files.'
+                             ' Skipping the conversion and unwrapping the embedded PDF instead')
+            from calibre.ebooks.azw4.reader import unwrap
+            unwrap(stream, self.output)
+            self.ui_reporter(1.)
+            self.log(self.output_fmt.upper(), 'output written to', self.output)
+            self.flush()
+            return
 
         self.ui_reporter(0.01, _('Converting input to HTML...'))
         ir = CompositeProgressReporter(0.01, 0.34, self.ui_reporter)
@@ -1142,17 +1158,23 @@ OptionRecommendation(name='search_replace',
 
         mobi_file_type = getattr(self.opts, 'mobi_file_type', 'old')
         needs_old_markup = (self.output_plugin.file_type == 'lit' or
-                    (self.output_plugin.file_type == 'mobi' and mobi_file_type
-                     == 'old'))
+                    (self.output_plugin.file_type == 'mobi' and mobi_file_type == 'old'))
+        transform_css_rules = ()
+        if self.opts.transform_css_rules:
+            transform_css_rules = self.opts.transform_css_rules
+            if isinstance(transform_css_rules, basestring):
+                transform_css_rules = json.loads(transform_css_rules)
         flattener = CSSFlattener(fbase=fbase, fkey=fkey,
                 lineh=line_height,
                 untable=needs_old_markup,
                 unfloat=needs_old_markup,
                 page_break_on_body=self.output_plugin.file_type in ('mobi',
                     'lit'),
+                transform_css_rules=transform_css_rules,
                 specializer=partial(self.output_plugin.specialize_css_for_output,
                     self.log, self.opts))
         flattener(self.oeb, self.opts)
+        self.opts._final_base_font_size = fbase
 
         self.opts.insert_blank_line = oibl
         self.opts.remove_paragraph_spacing = orps
@@ -1232,4 +1254,3 @@ def create_oebbook(log, path_or_stream, opts, reader=None,
 
     reader()(oeb, path_or_stream)
     return oeb
-

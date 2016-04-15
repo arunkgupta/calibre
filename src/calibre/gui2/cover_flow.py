@@ -1,4 +1,4 @@
-#!/usr/bin/env  python
+#!/usr/bin/env  python2
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
 __docformat__ = 'restructuredtext en'
@@ -78,22 +78,47 @@ if pictureflow is not None:
 
     class DatabaseImages(pictureflow.FlowImages):
 
-        def __init__(self, model, buffer=20):
+        def __init__(self, model, is_cover_browser_visible):
             pictureflow.FlowImages.__init__(self)
             self.model = model
+            self.is_cover_browser_visible = is_cover_browser_visible
             self.model.modelReset.connect(self.reset, type=Qt.QueuedConnection)
+            self.ignore_image_requests = True
+            self.template_inited = False
+
+        def init_template(self, db):
+            self.template_cache = {}
+            self.template_error_reported = False
+            self.template = db.pref('cover_browser_title_template', '{title}')
+            self.template_is_title = self.template == '{title}'
 
         def count(self):
             return self.model.count()
 
         def caption(self, index):
+            if self.ignore_image_requests:
+                return ''
+            ans = ''
             try:
-                ans = self.model.title(index)
-                if not ans:
-                    ans = ''
-                ans = ans.replace('&', '&&')
-            except:
-                ans = ''
+                db = self.model.db.new_api
+                if not self.template_inited:
+                    self.init_template(db)
+                if self.template_is_title:
+                    ans = self.model.title(index)
+                else:
+                    book_id = self.model.id(index)
+                    mi = db.get_proxy_metadata(book_id)
+                    try:
+                        ans = mi.formatter.safe_format(self.template, mi, _('TEMPLATE ERROR'), mi, template_cache=self.template_cache)
+                    except Exception:
+                        if not self.template_error_reported:
+                            self.template_error_reported = True
+                            import traceback
+                            traceback.print_exc()
+                        ans = ''
+                ans = (ans or '').replace('&', '&&')
+            except Exception:
+                return ''
             return ans
 
         def subtitle(self, index):
@@ -108,12 +133,15 @@ if pictureflow is not None:
             self.beginResetModel(), self.endResetModel()
 
         def beginResetModel(self):
-            self.dataChanged.emit()
+            if self.is_cover_browser_visible():
+                self.dataChanged.emit()
 
         def endResetModel(self):
             pass
 
         def image(self, index):
+            if self.ignore_image_requests:
+                return QImage()
             return self.model.cover(index)
 
     class CoverFlow(pictureflow.PictureFlow):
@@ -132,12 +160,8 @@ if pictureflow is not None:
                     type=Qt.QueuedConnection)
             self.context_menu = None
             self.setContextMenuPolicy(Qt.DefaultContextMenu)
-            try:
-                self.setPreserveAspectRatio(gprefs['cb_preserve_aspect_ratio'])
-            except AttributeError:
-                pass  # source checkout without updated binary
-            if hasattr(self, 'setSubtitleFont'):
-                self.setSubtitleFont(QFont(rating_font()))
+            self.setPreserveAspectRatio(gprefs['cb_preserve_aspect_ratio'])
+            self.setSubtitleFont(QFont(rating_font()))
             if not gprefs['cover_browser_reflections']:
                 self.setShowReflections(False)
 
@@ -164,6 +188,9 @@ if pictureflow is not None:
 
         def _data_changed(self):
             pictureflow.PictureFlow.dataChanged(self)
+
+        def setCurrentSlide(self, num):
+            pictureflow.PictureFlow.setCurrentSlide(self, num)
 
 
 else:
@@ -248,16 +275,16 @@ class CoverFlowMixin(object):
             self.cover_flow = CoverFlow(parent=self)
             self.cover_flow.currentChanged.connect(self.sync_listview_to_cf)
             self.cover_flow.context_menu_requested.connect(self.cf_context_menu_requested)
-            self.library_view.selectionModel().currentRowChanged.connect(
-                    self.sync_cf_to_listview)
-            self.db_images = DatabaseImages(self.library_view.model())
+            self.library_view.selectionModel().currentRowChanged.connect(self.sync_cf_to_listview)
+            self.db_images = DatabaseImages(self.library_view.model(), self.is_cover_browser_visible)
             self.cover_flow.setImages(self.db_images)
             self.cover_flow.itemActivated.connect(self.iactions['View'].view_specific_book)
         else:
-            self.cover_flow = QLabel('<p>'+_('Cover browser could not be loaded')
-                    +'<br>'+pictureflowerror)
+            self.cover_flow = QLabel('<p>'+_('Cover browser could not be loaded') +
+                                     '<br>'+pictureflowerror)
             self.cover_flow.setWordWrap(True)
         if config['separate_cover_flow']:
+            self.separate_cover_browser = True
             self.cb_splitter.button.clicked.connect(self.toggle_cover_browser)
             self.cb_splitter.button.set_state_to_show()
             self.cb_splitter.action_toggle.triggered.connect(self.toggle_cover_browser)
@@ -265,10 +292,11 @@ class CoverFlowMixin(object):
                 self.cover_flow.stop.connect(self.hide_cover_browser)
             self.cover_flow.setVisible(False)
         else:
+            self.separate_cover_browser = False
             self.cb_splitter.insertWidget(self.cb_splitter.side_index, self.cover_flow)
             if CoverFlow is not None:
                 self.cover_flow.stop.connect(self.cb_splitter.hide_side_pane)
-        self.cb_splitter.button.toggled.connect(self.cover_browser_toggled)
+        self.cb_splitter.button.toggled.connect(self.cover_browser_toggled, type=Qt.QueuedConnection)
 
     def toggle_cover_browser(self, *args):
         cbd = getattr(self, 'cb_dialog', None)
@@ -286,6 +314,9 @@ class CoverFlowMixin(object):
     def cover_browser_shown(self):
         self.cover_flow.setFocus(Qt.OtherFocusReason)
         if CoverFlow is not None:
+            if self.db_images.ignore_image_requests:
+                self.db_images.ignore_image_requests = False
+                self.db_images.dataChanged.emit()
             self.cover_flow.setCurrentSlide(self.library_view.currentIndex().row())
             self.cover_flow_syncing_enabled = True
             QTimer.singleShot(500, self.cover_flow_do_sync)
@@ -325,9 +356,24 @@ class CoverFlowMixin(object):
             self.cb_dialog = None
         self.cb_splitter.button.set_state_to_show()
 
+    def is_cover_browser_visible(self):
+        try:
+            if self.separate_cover_browser:
+                return self.cover_flow.isVisible()
+        except AttributeError:
+            return False  # called before init_cover_flow_mixin
+        return not self.cb_splitter.is_side_index_hidden
+
+    def refresh_cover_browser(self):
+        try:
+            if self.is_cover_browser_visible() and not isinstance(self.cover_flow, QLabel):
+                self.db_images.ignore_image_requests = False
+                self.cover_flow.dataChanged()
+        except AttributeError:
+            pass  # called before init_cover_flow_mixin
+
     def sync_cf_to_listview(self, current, previous):
-        if self.cover_flow_sync_flag and self.cover_flow.isVisible() and \
-                self.cover_flow.currentSlide() != current.row():
+        if (self.cover_flow_sync_flag and self.is_cover_browser_visible() and self.cover_flow.currentSlide() != current.row()):
             self.cover_flow.setCurrentSlide(current.row())
         self.cover_flow_sync_flag = True
 
@@ -342,8 +388,7 @@ class CoverFlowMixin(object):
     def cover_flow_do_sync(self):
         self.cover_flow_sync_flag = True
         try:
-            if self.cover_flow.isVisible() and self.cf_last_updated_at is not None and \
-                time.time() - self.cf_last_updated_at > 0.5:
+            if (self.is_cover_browser_visible() and self.cf_last_updated_at is not None and time.time() - self.cf_last_updated_at > 0.5):
                 self.cf_last_updated_at = None
                 row = self.cover_flow.currentSlide()
                 m = self.library_view.model()

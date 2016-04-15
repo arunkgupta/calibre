@@ -119,7 +119,7 @@ tarball. Edit setup.py and set zip_safe=False. Then run::
 
 Run the following command to install python dependencies::
 
-    easy_install --always-unzip -U mechanize python-dateutil dnspython cssutils clientform pycrypto cssselect pygments
+    easy_install --always-unzip -U mechanize python-dateutil dnspython cssutils clientform pycrypto pygments
 
 Install pyreadline from https://pypi.python.org/pypi/pyreadline/2.0
 
@@ -228,10 +228,9 @@ Download the libpng .zip source file from:
 http://www.libpng.org/pub/png/libpng.html
 
 Run::
-    mkdir -p build && cd build
-    cmake -G "NMake Makefiles" -DPNG_SHARED=1 -DCMAKE_BUILD_TYPE=Release -DZLIB_INCLUDE_DIR=C:/cygwin64/home/kovid/sw/include -DZLIB_LIBRARY=C:/cygwin64/home/kovid/sw/lib/zdll.lib ..
+    cmake -G "NMake Makefiles" -DPNG_SHARED=1 -DCMAKE_BUILD_TYPE=Release -DZLIB_INCLUDE_DIR=C:/cygwin64/home/kovid/sw/include -DZLIB_LIBRARY=C:/cygwin64/home/kovid/sw/lib/zdll.lib .
     nmake
-    cp libpng*.dll ~/sw/bin/ && cp libpng*.lib ~/sw/lib/ && cp pnglibconf.h ../png.h ../pngconf.h ~/sw/include/
+    cp libpng*.dll ~/sw/bin/ && cp libpng*.lib ~/sw/lib/ && cp pnglibconf.h png.h pngconf.h ~/sw/include/
 
 freetype
 -----------
@@ -492,23 +491,9 @@ Download Qt sourcecode (.zip) from: http://download.qt-project.org/official_rele
     * Slim down Qt by not building various things we dont need. Edit
       :file:`qtwebkit/Tools/qmake/mkspecs/features/configure.prf` and remove
       build_webkit2. Edit qt.pro and comment out the addModule() lines for
-      qtxmlpatterns, qtdeclarative, qtquick1, qtwebsockets. Change the
-      addModule line for qtwebkit to depend on qtbase instead of qtdeclarative.
-
-    * Patch to fix soft hyphen rendering in viewer (https://bugreports.qt-project.org/browse/QTBUG-40912):
-
---- qtwebkit/Source/WebCore/platform/graphics/WidthIterator.cpp
-+++ qtwebkit/Source/WebCore/platform/graphics/WidthIterator.cpp
-@@ -265,7 +265,7 @@ inline unsigned WidthIterator::advanceInternal(TextIterator& textIterator, Glyph
-                 m_isAfterExpansion = false;
-         }
- 
--        if (shouldApplyFontTransforms() && glyphBuffer && Font::treatAsSpace(character))
-+        if (shouldApplyFontTransforms() && glyphBuffer && (Font::treatAsSpace(character) || Font::treatAsZeroWidthSpace(character)))
-             charactersTreatedAsSpace.append(make_pair(glyphBuffer->size(),
-                 OriginalAdvancesForCharacterTreatedAsSpace(character == ' ', glyphBuffer->size() ? glyphBuffer->advanceAt(glyphBuffer->size() - 1).width() : 0, width)));
- 
-
+      qtxmlpatterns, qtdeclarative, qtquick1, qttools, qtwebsockets, qtwebchannel,
+      qtwebengine. Change the addModule line for qtwebkit to depend on qtbase
+      instead of qtdeclarative anf remove qtwebchannel
 
     * Qt uses its own routine to locate and load "system libraries" including
       the openssl libraries needed for "Get Books". This means that we have to
@@ -559,6 +544,26 @@ libimobiledevice
 ------------------
 
 See libimobiledevice_notes.rst
+
+optipng
+----------
+
+Compiling instructions::
+
+    sed -i.bak 's/\$</%s/' src/libpng/scripts/makefile.vcwin32
+    nmake -f build/visualc.mk
+    cp src/optipng/optipng.exe* ~/sw/bin
+
+mozjpeg
+----------
+
+Compiling instructions::
+
+   mkdir -p build && cd build
+   cmake -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release -DWITH_TURBOJPEG:BOOL=FALSE ..
+   nmake
+   cp jpegtran-static.exe ~/sw/bin/jpegtran-calibre.exe
+   cp cjpeg-static.exe ~/sw/bin/cjpeg-calibre.exe
 
 calibre
 ---------

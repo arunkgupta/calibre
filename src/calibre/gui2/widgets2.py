@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -133,6 +133,17 @@ class RightClickButton(QToolButton):
         return QToolButton.mousePressEvent(self, ev)
 
 class Dialog(QDialog):
+
+    '''
+    An improved version of Qt's QDialog class. This automatically remembers the
+    last used size, automatically connects the signals for QDialogButtonBox,
+    automatically sets the window title and if the dialog has an object named
+    splitter, automatically saves the splitter state.
+
+    In order to use it, simply subclass an implement setup_ui(). You can also
+    implement sizeHint() to give the dialog a different default size when shown
+    for the first time.
+    '''
 
     def __init__(self, title, name, parent=None, prefs=gprefs):
         QDialog.__init__(self, parent)

@@ -6,6 +6,7 @@
  */
 
 #define NO_ICU_TO_PYTHON
+#define NO_PYTHON_TO_ICU32
 #include "icu_calibre_utils.h"
 #include <float.h>
 
@@ -17,7 +18,6 @@
 typedef unsigned char bool;
 #define TRUE 1
 #define FALSE 0
-#define MIN(x, y) ((x < y) ? x : y)
 #define MAX(x, y) ((x > y) ? x : y)
 #define nullfree(x) if(x != NULL) free(x); x = NULL;
 

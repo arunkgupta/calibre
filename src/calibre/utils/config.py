@@ -11,7 +11,7 @@ from copy import deepcopy
 import optparse
 
 from calibre.constants import (config_dir, CONFIG_DIR_MODE, __appname__,
-        get_version, __author__)
+        get_version, __author__, DEBUG)
 from calibre.utils.lock import ExclusiveFile
 from calibre.utils.config_base import (make_config_dir, Option, OptionValues,
         OptionSet, ConfigInterface, Config, prefs, StringConfig, ConfigProxy,
@@ -216,9 +216,10 @@ class DynamicConfig(dict):
                 except SystemError:
                     pass
                 except:
-                    import traceback
-                    print 'Failed to unpickle stored object:'
-                    traceback.print_exc()
+                    print 'WARNING: Failed to unpickle stored config object, ignoring'
+                    if DEBUG:
+                        import traceback
+                        traceback.print_exc()
                     d = {}
         if clear_current:
             self.clear()
@@ -267,11 +268,11 @@ class XMLConfig(dict):
 
     EXTENSION = '.plist'
 
-    def __init__(self, rel_path_to_cf_file):
+    def __init__(self, rel_path_to_cf_file, base_path=config_dir):
         dict.__init__(self)
         self.no_commit = False
         self.defaults = {}
-        self.file_path = os.path.join(config_dir,
+        self.file_path = os.path.join(base_path,
                 *(rel_path_to_cf_file.split('/')))
         self.file_path = os.path.abspath(self.file_path)
         if not self.file_path.endswith(self.EXTENSION):

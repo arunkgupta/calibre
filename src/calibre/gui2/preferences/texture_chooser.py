@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -140,7 +140,7 @@ class TextureChooser(QDialog):
             return
         if self.selected_fname.startswith(':'):
             return error_dialog(self, _('Cannot remove'),
-                                _('Cannot remover builtin textures'), show=True)
+                                _('Cannot remove builtin textures'), show=True)
         os.remove(unicode(self.selected_item.data(Qt.UserRole+1) or ''))
         self.images.takeItem(self.images.row(self.selected_item))
 

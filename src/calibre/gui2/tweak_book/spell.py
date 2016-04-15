@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -20,7 +20,7 @@ from PyQt5.Qt import (
     QT_VERSION_STR)
 
 from calibre.constants import __appname__, plugins
-from calibre.ebooks.oeb.polish.spell import replace_word, get_all_words, merge_locations, get_checkable_file_names
+from calibre.ebooks.oeb.polish.spell import replace_word, get_all_words, merge_locations, get_checkable_file_names, undo_replace_word
 from calibre.gui2 import choose_files, error_dialog
 from calibre.gui2.complete2 import LineEdit
 from calibre.gui2.languages import LanguagesEdit
@@ -57,11 +57,11 @@ class AddDictionary(QDialog):  # {{{
         self.setLayout(l)
 
         self.la = la = QLabel('<p>' + _(
-        '''{0} supports the use of OpenOffice dictionaries for spell checking. You can
-            download more dictionaries from <a href="{1}">the OpenOffice extensions repository</a>.
+        '''{0} supports the use of LibreOffice dictionaries for spell checking. You can
+            download more dictionaries from <a href="{1}">the LibreOffice extensions repository</a>.
             The dictionary will download as an .oxt file. Simply specify the path to the
             downloaded .oxt file here to add the dictionary to {0}.'''.format(
-                __appname__, 'http://extensions.openoffice.org'))+'<p>')
+                __appname__, 'http://extensions.libreoffice.org/extension-center?getCategories=Dictionary&getCompatibility=any&sort_on=positive_ratings'))+'<p>')  # noqa
         la.setWordWrap(True)
         la.setOpenExternalLinks(True)
         la.setMinimumWidth(450)
@@ -883,6 +883,7 @@ class SpellCheck(Dialog):
         Dialog.__init__(self, _('Check spelling'), 'spell-check', parent)
         self.work_finished.connect(self.work_done, type=Qt.QueuedConnection)
         self.setAttribute(Qt.WA_DeleteOnClose, False)
+        self.undo_cache = {}
 
     def setup_ui(self):
         self.state_name = 'spell-check-table-state-' + QT_VERSION_STR.partition('.')[0]
@@ -899,6 +900,10 @@ class SpellCheck(Dialog):
         b.setToolTip('<p>' + _('Re-scan the book for words, useful if you have edited the book since opening this dialog'))
         b.setIcon(QIcon(I('view-refresh.png')))
         b.clicked.connect(partial(self.refresh, change_request=None))
+        b = self.bb.addButton(_('&Undo last change'), self.bb.ActionRole)
+        b.setToolTip('<p>' + _('Undo the last spell check word replacement, if any'))
+        b.setIcon(QIcon(I('edit-undo.png')))
+        b.clicked.connect(self.undo_last_change)
 
         self.progress = p = QWidget(self)
         s.addWidget(p)
@@ -1110,13 +1115,24 @@ class SpellCheck(Dialog):
         self.change_requested.emit(w, new_word)
 
     def do_change_word(self, w, new_word):
-        changed_files = replace_word(current_container(), new_word, self.words_model.words[w], w[1])
+        self.undo_cache.clear()
+        changed_files = replace_word(current_container(), new_word, self.words_model.words[w], w[1], undo_cache=self.undo_cache)
         if changed_files:
             self.word_replaced.emit(changed_files)
             w = self.words_model.replace_word(w, new_word)
             row = self.words_model.row_for_word(w)
             if row > -1:
                 self.words_view.highlight_row(row)
+
+    def undo_last_change(self):
+        if not self.undo_cache:
+            return error_dialog(self, _('No changed word'), _(
+                'There is no spelling replacement to undo'), show=True)
+        changed_files = undo_replace_word(current_container(), self.undo_cache)
+        self.undo_cache.clear()
+        if changed_files:
+            self.word_replaced.emit(changed_files)
+            self.refresh()
 
     def toggle_ignore(self):
         current = self.words_view.currentIndex()
@@ -1234,6 +1250,7 @@ class SpellCheck(Dialog):
 
     def show(self):
         Dialog.show(self)
+        self.undo_cache.clear()
         QTimer.singleShot(0, self.refresh)
 
     def accept(self):

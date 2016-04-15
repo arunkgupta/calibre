@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -19,10 +19,69 @@ from calibre.ebooks.metadata.sources.base import (Source, Option, fixcase,
 from calibre.ebooks.metadata.book.base import Metadata
 from calibre.utils.localization import canonicalize_lang
 
-def CSSSelect(expr):
-    from cssselect import HTMLTranslator
-    from lxml.etree import XPath
-    return XPath(HTMLTranslator().css_to_xpath(expr))
+def parse_details_page(url, log, timeout, browser, domain):
+    from calibre.utils.cleantext import clean_ascii_chars
+    from calibre.ebooks.chardet import xml_to_unicode
+    import html5lib
+    from lxml.html import tostring
+    try:
+        raw = browser.open_novisit(url, timeout=timeout).read().strip()
+    except Exception as e:
+        if callable(getattr(e, 'getcode', None)) and \
+                e.getcode() == 404:
+            log.error('URL malformed: %r'%url)
+            return
+        attr = getattr(e, 'args', [None])
+        attr = attr if attr else [None]
+        if isinstance(attr[0], socket.timeout):
+            msg = 'Amazon timed out. Try again later.'
+            log.error(msg)
+        else:
+            msg = 'Failed to make details query: %r'%url
+            log.exception(msg)
+        return
+
+    oraw = raw
+    if 'amazon.com.br' in url:
+        raw = raw.decode('utf-8')  # amazon.com.br serves utf-8 but has an incorrect latin1 <meta> tag
+    raw = xml_to_unicode(raw, strip_encoding_pats=True, resolve_entities=True)[0]
+    if '<title>404 - ' in raw:
+        log.error('URL malformed: %r'%url)
+        return
+
+    try:
+        root = html5lib.parse(clean_ascii_chars(raw), treebuilder='lxml',
+                namespaceHTMLElements=False)
+    except:
+        msg = 'Failed to parse amazon details page: %r'%url
+        log.exception(msg)
+        return
+    if domain == 'jp':
+        for a in root.xpath('//a[@href]'):
+            if 'black-curtain-redirect.html' in a.get('href'):
+                url = 'http://amazon.co.jp'+a.get('href')
+                log('Black curtain redirect found, following')
+                return parse_details_page(url, log, timeout, browser, domain)
+
+    errmsg = root.xpath('//*[@id="errorMessage"]')
+    if errmsg:
+        msg = 'Failed to parse amazon details page: %r'%url
+        msg += tostring(errmsg, method='text', encoding=unicode).strip()
+        log.error(msg)
+        return
+
+    from css_selectors import Select
+    selector = Select(root)
+    return oraw, root, selector
+
+def parse_asin(root, log, url):
+    try:
+        link = root.xpath('//link[@rel="canonical" and @href]')
+        for l in link:
+            return l.get('href').rpartition('/')[-1]
+    except Exception:
+        log.exception('Error parsing ASIN for url: %r'%url)
+
 
 class Worker(Thread):  # Get details {{{
 
@@ -31,8 +90,9 @@ class Worker(Thread):  # Get details {{{
     '''
 
     def __init__(self, url, result_queue, browser, log, relevance, domain,
-            plugin, timeout=20, testing=False):
+            plugin, timeout=20, testing=False, preparsed_root=None):
         Thread.__init__(self)
+        self.preparsed_root = preparsed_root
         self.daemon = True
         self.testing = testing
         self.url, self.result_queue = url, result_queue
@@ -44,7 +104,7 @@ class Worker(Thread):  # Get details {{{
         from lxml.html import tostring
         self.tostring = tostring
 
-        months = {
+        months = {  # {{{
             'de': {
             1: ['jän', 'januar'],
             2: ['februar'],
@@ -56,15 +116,18 @@ class Worker(Thread):  # Get details {{{
             12: ['dez', 'dezember']
             },
             'it': {
-            1: ['enn'],
-            2: ['febbr'],
-            5: ['magg'],
+            1: ['gennaio', 'enn'],
+            2: ['febbraio', 'febbr'],
+            3: ['marzo'],
+            4: ['aprile'],
+            5: ['maggio', 'magg'],
             6: ['giugno'],
             7: ['luglio'],
-            8: ['ag'],
-            9: ['sett'],
-            10: ['ott'],
-            12: ['dic'],
+            8: ['agosto', 'ag'],
+            9: ['settembre', 'sett'],
+            10: ['ottobre', 'ott'],
+            11: ['novembre'],
+            12: ['dicembre', 'dic'],
             },
             'fr': {
             1: ['janv'],
@@ -120,8 +183,11 @@ class Worker(Thread):  # Get details {{{
             11: [u'11月'],
             12: [u'12月'],
             },
+            'nl': {
+                1: ['januari'], 2: ['februari'], 3: ['maart'], 5: ['mei'], 6: ['juni'], 7: ['juli'], 8: ['augustus'], 10: ['oktober'],
+            }
 
-        }
+        }  # }}}
 
         self.english_months = [None, 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -135,6 +201,7 @@ class Worker(Thread):  # Get details {{{
                  text()="Détails sur le produit" or \
                  text()="Detalles del producto" or \
                  text()="Detalhes do produto" or \
+                 text()="Productgegevens" or \
                  starts-with(text(), "登録情報")]/../div[@class="content"]
             '''
         # Editor: is for Spanish
@@ -145,9 +212,10 @@ class Worker(Thread):  # Get details {{{
                     starts-with(text(), "Editeur") or \
                     starts-with(text(), "Editor:") or \
                     starts-with(text(), "Editora:") or \
+                    starts-with(text(), "Uitgever:") or \
                     starts-with(text(), "出版社:")]
             '''
-        self.publisher_names = {'Publisher', 'Verlag', 'Editore', 'Editeur', 'Editor', 'Editora', '出版社'}
+        self.publisher_names = {'Publisher', 'Uitgever', 'Verlag', 'Editore', 'Editeur', 'Editor', 'Editora', '出版社'}
 
         self.language_xpath =    '''
             descendant::*[
@@ -160,7 +228,7 @@ class Worker(Thread):  # Get details {{{
                 or starts-with(text(), "言語") \
                 ]
             '''
-        self.language_names = {'Language', 'Sprache', 'Lingua', 'Idioma', 'Langue', '言語'}
+        self.language_names = {'Language', 'Sprache', 'Lingua', 'Idioma', 'Langue', '言語', 'Taal'}
 
         self.tags_xpath = '''
             descendant::h2[
@@ -175,16 +243,17 @@ class Worker(Thread):  # Get details {{{
         '''
 
         self.ratings_pat = re.compile(
-            r'([0-9.]+) ?(out of|von|su|étoiles sur|つ星のうち|de un máximo de|de) ([\d\.]+)( (stars|Sternen|stelle|estrellas|estrelas)){0,1}')
+            r'([0-9.]+) ?(out of|von|van|su|étoiles sur|つ星のうち|de un máximo de|de) ([\d\.]+)( (stars|Sternen|stelle|estrellas|estrelas|sterren)){0,1}')
 
         lm = {
-                'eng': ('English', 'Englisch'),
+                'eng': ('English', 'Englisch', 'Engels'),
                 'fra': ('French', 'Français'),
                 'ita': ('Italian', 'Italiano'),
                 'deu': ('German', 'Deutsch'),
                 'spa': ('Spanish', 'Espa\xf1ol', 'Espaniol'),
                 'jpn': ('Japanese', u'日本語'),
                 'por': ('Portuguese', 'Português'),
+                'nld': ('Dutch', 'Nederlands',),
                 }
         self.lang_map = {}
         for code, names in lm.iteritems():
@@ -218,63 +287,18 @@ class Worker(Thread):  # Get details {{{
             self.log.exception('get_details failed for url: %r'%self.url)
 
     def get_details(self):
-        from calibre.utils.cleantext import clean_ascii_chars
-        from calibre.ebooks.chardet import xml_to_unicode
-        import html5lib
 
-        try:
-            raw = self.browser.open_novisit(self.url, timeout=self.timeout).read().strip()
-        except Exception as e:
-            if callable(getattr(e, 'getcode', None)) and \
-                    e.getcode() == 404:
-                self.log.error('URL malformed: %r'%self.url)
-                return
-            attr = getattr(e, 'args', [None])
-            attr = attr if attr else [None]
-            if isinstance(attr[0], socket.timeout):
-                msg = 'Amazon timed out. Try again later.'
-                self.log.error(msg)
-            else:
-                msg = 'Failed to make details query: %r'%self.url
-                self.log.exception(msg)
-            return
+        if self.preparsed_root is None:
+            raw, root, selector = parse_details_page(self.url, self.log, self.timeout, self.browser, self.domain)
+        else:
+            raw, root, selector = self.preparsed_root
 
-        oraw = raw
-        raw = xml_to_unicode(raw, strip_encoding_pats=True,
-                resolve_entities=True)[0]
-        if '<title>404 - ' in raw:
-            self.log.error('URL malformed: %r'%self.url)
-            return
-
-        try:
-            root = html5lib.parse(clean_ascii_chars(raw), treebuilder='lxml',
-                    namespaceHTMLElements=False)
-        except:
-            msg = 'Failed to parse amazon details page: %r'%self.url
-            self.log.exception(msg)
-            return
-        if self.domain == 'jp':
-            for a in root.xpath('//a[@href]'):
-                if 'black-curtain-redirect.html' in a.get('href'):
-                    self.url = 'http://amazon.co.jp'+a.get('href')
-                    self.log('Black curtain redirect found, following')
-                    return self.get_details()
-
-        errmsg = root.xpath('//*[@id="errorMessage"]')
-        if errmsg:
-            msg = 'Failed to parse amazon details page: %r'%self.url
-            msg += self.tostring(errmsg, method='text', encoding=unicode).strip()
-            self.log.error(msg)
-            return
-
-        self.parse_details(oraw, root)
+        from css_selectors import Select
+        self.selector = Select(root)
+        self.parse_details(raw, root)
 
     def parse_details(self, raw, root):
-        try:
-            asin = self.parse_asin(root)
-        except:
-            self.log.exception('Error parsing asin for url: %r'%self.url)
-            asin = None
+        asin = parse_asin(root, self.log, self.url)
         if self.testing:
             import tempfile, uuid
             with tempfile.NamedTemporaryFile(prefix=(asin or str(uuid.uuid4()))+ '_',
@@ -311,7 +335,7 @@ class Worker(Thread):  # Get details {{{
             self.log.exception('Error parsing ratings for url: %r'%self.url)
 
         try:
-            mi.comments = self.parse_comments(root)
+            mi.comments = self.parse_comments(root, raw)
         except:
             self.log.exception('Error parsing comments for url: %r'%self.url)
 
@@ -335,7 +359,7 @@ class Worker(Thread):  # Get details {{{
             self.log.exception('Error parsing cover for url: %r'%self.url)
         mi.has_cover = bool(self.cover_url)
 
-        non_hero = CSSSelect('div#bookDetails_container_div div#nonHeroSection')(root)
+        non_hero = tuple(self.selector('div#bookDetails_container_div div#nonHeroSection'))
         if non_hero:
             # New style markup
             try:
@@ -387,11 +411,6 @@ class Worker(Thread):  # Get details {{{
 
         self.result_queue.put(mi)
 
-    def parse_asin(self, root):
-        link = root.xpath('//link[@rel="canonical" and @href]')
-        for l in link:
-            return l.get('href').rpartition('/')[-1]
-
     def totext(self, elem):
         return self.tostring(elem, encoding=unicode, method='text').strip()
 
@@ -415,9 +434,9 @@ class Worker(Thread):  # Get details {{{
         return ans
 
     def parse_authors(self, root):
-        matches = CSSSelect('#byline .author .contributorNameID')(root)
+        matches = tuple(self.selector('#byline .author .contributorNameID'))
         if not matches:
-            matches = CSSSelect('#byline .author a.a-link-normal')(root)
+            matches = tuple(self.selector('#byline .author a.a-link-normal'))
         if matches:
             authors = [self.totext(x) for x in matches]
             return [a for a in authors if a]
@@ -437,11 +456,11 @@ class Worker(Thread):  # Get details {{{
 
     def parse_rating(self, root):
         for x in root.xpath('//div[@id="cpsims-feature" or @id="purchase-sims-feature" or @id="rhf"]'):
-            # Remove the similar books section as it can cause sppurious
+            # Remove the similar books section as it can cause spurious
             # ratings matches
             x.getparent().remove(x)
 
-        rating_paths = ('//div[@data-feature-name="averageCustomerReviews"]',
+        rating_paths = ('//div[@data-feature-name="averageCustomerReviews" or @id="averageCustomerReviews"]',
                         '//div[@class="jumpBar"]/descendant::span[contains(@class,"asinReviewsSummary")]',
                         '//div[@class="buying"]/descendant::span[contains(@class,"asinReviewsSummary")]',
                         '//span[@class="crAvgStars"]/descendant::span[contains(@class,"asinReviewsSummary")]')
@@ -486,9 +505,10 @@ class Worker(Thread):  # Get details {{{
         desc = re.sub(r'(?s)<!--.*?-->', '', desc)
         return sanitize_comments_html(desc)
 
-    def parse_comments(self, root):
+    def parse_comments(self, root, raw):
+        from urllib import unquote
         ans = ''
-        ns = CSSSelect('#bookDescription_feature_div noscript')(root)
+        ns = tuple(self.selector('#bookDescription_feature_div noscript'))
         if ns:
             ns = ns[0]
             if len(ns) == 0 and ns.text:
@@ -506,6 +526,20 @@ class Worker(Thread):  # Get details {{{
         desc = root.xpath('//div[@id="productDescription"]/*[@class="content"]')
         if desc:
             ans += self._render_comments(desc[0])
+        else:
+            # Idiot chickens from amazon strike again. This data is now stored
+            # in a JS variable inside a script tag URL encoded.
+            m = re.search(b'var\s+iframeContent\s*=\s*"([^"]+)"', raw)
+            if m is not None:
+                try:
+                    text = unquote(m.group(1)).decode('utf-8')
+                    nr = html5lib.parse(text, treebuilder='lxml', namespaceHTMLElements=False)
+                    desc = nr.xpath('//div[@id="productDescription"]/*[@class="content"]')
+                    if desc:
+                        ans += self._render_comments(desc[0])
+                except Exception as e:
+                    self.log.warn('Parsing of obfuscated product description failed with error: %s' % as_unicode(e))
+
         return ans
 
     def parse_series(self, root):
@@ -541,11 +575,11 @@ class Worker(Thread):  # Get details {{{
     def parse_cover(self, root, raw=b""):
         # Look for the image URL in javascript, using the first image in the
         # image gallery as the cover
+        import json
         imgpat = re.compile(r"""'imageGalleryData'\s*:\s*(\[\s*{.+])""")
         for script in root.xpath('//script'):
             m = imgpat.search(script.text or '')
             if m is not None:
-                import json
                 try:
                     return json.loads(m.group(1))[0]['mainUrl']
                 except Exception:
@@ -574,6 +608,25 @@ class Worker(Thread):  # Get details {{{
             imgs = root.xpath('//div[@class="main-image-inner-wrapper"]/img[@src]')
             if not imgs:
                 imgs = root.xpath('//div[@id="main-image-container"]//img[@src]')
+                if not imgs:
+                    imgs = root.xpath('//div[@id="mainImageContainer"]//img[@data-a-dynamic-image]')
+                    for img in imgs:
+                        try:
+                            idata = json.loads(img.get('data-a-dynamic-image'))
+                        except Exception:
+                            imgs = ()
+                        else:
+                            mwidth = 0
+                            try:
+                                url = None
+                                for iurl, (width, height) in idata.iteritems():
+                                    if width > mwidth:
+                                        mwidth = width
+                                        url = iurl
+                                return url
+                            except Exception:
+                                pass
+
         for img in imgs:
             src = img.get('src')
             if 'data:' in src:
@@ -666,7 +719,7 @@ class Amazon(Source):
     capabilities = frozenset(['identify', 'cover'])
     touched_fields = frozenset(['title', 'authors', 'identifier:amazon',
         'rating', 'comments', 'publisher', 'pubdate',
-        'languages', 'series'])
+        'languages', 'series', 'tags'])
     has_html_comments = True
     supports_gzip_transfer_encoding = True
     prefer_results_with_isbn = False
@@ -680,6 +733,7 @@ class Amazon(Source):
             'jp': _('Japan'),
             'es': _('Spain'),
             'br': _('Brazil'),
+            'nl': _('Netherlands'),
     }
 
     options = (
@@ -737,7 +791,7 @@ class Amazon(Source):
                     return domain, val
         return None, None
 
-    def get_book_url(self, identifiers):  # {{{
+    def _get_book_url(self, identifiers):  # {{{
         domain, asin = self.get_domain_and_asin(identifiers)
         if domain and asin:
             url = None
@@ -751,7 +805,12 @@ class Amazon(Source):
                 url = 'http://www.amazon.%s/dp/%s'%(domain, asin)
             if url:
                 idtype = 'amazon' if domain == 'com' else 'amazon_'+domain
-                return (idtype, asin, url)
+                return domain, idtype, asin, url
+
+    def get_book_url(self, identifiers):
+        ans = self._get_book_url(identifiers)
+        if ans is not None:
+            return ans[1:]
 
     def get_book_url_name(self, idtype, idval, url):
         if idtype == 'amazon':
@@ -820,7 +879,7 @@ class Amazon(Source):
             q['field-isbn'] = isbn
         else:
             # Only return book results
-            q['search-alias'] = 'digital-text' if domain == 'br' else 'stripbooks'
+            q['search-alias'] = {'br':'digital-text', 'nl':'aps'}.get(domain, 'stripbooks')
             if title:
                 title_tokens = list(self.get_title_tokens(title))
                 if title_tokens:
@@ -839,9 +898,18 @@ class Amazon(Source):
         # magic parameter to enable Japanese Shift_JIS encoding.
         if domain == 'jp':
             q['__mk_ja_JP'] = u'カタカナ'
+        if domain == 'nl':
+            q['__mk_nl_NL'] = u'ÅMÅŽÕÑ'
+            if 'field-keywords' not in q:
+                q['field-keywords'] = ''
+            for f in 'field-isbn field-title field-author'.split():
+                q['field-keywords'] += ' ' + q.pop(f, '')
+            q['field-keywords'] = q['field-keywords'].strip()
 
         if domain == 'jp':
             encode_to = 'Shift_JIS'
+        elif domain == 'nl':
+            encode_to='utf-8'
         else:
             encode_to = 'latin1'
         encoded_q = dict([(x.encode(encode_to, 'ignore'), y.encode(encode_to,
@@ -935,13 +1003,28 @@ class Amazon(Source):
         import html5lib
 
         testing = getattr(self, 'running_a_test', False)
+        br = self.browser
+
+        udata = self._get_book_url(identifiers)
+        if udata is not None:
+            # Try to directly get details page instead of running a search
+            domain, idtype, asin, durl = udata
+            preparsed_root = parse_details_page(durl, log, timeout, br, domain)
+            if preparsed_root is not None:
+                qasin = parse_asin(preparsed_root[1], log, durl)
+                if qasin == asin:
+                    w = Worker(durl, result_queue, br, log, 0, domain, self, testing=testing, preparsed_root=preparsed_root)
+                    try:
+                        w.get_details()
+                        return
+                    except Exception:
+                        log.exception('get_details failed for url: %r'%durl)
 
         query, domain = self.create_query(log, title=title, authors=authors,
                 identifiers=identifiers)
         if query is None:
             log.error('Insufficient metadata to construct query')
             return
-        br = self.browser
         if testing:
             print ('Using user agent for amazon: %s'%self.user_agent)
         try:
@@ -1070,12 +1153,15 @@ if __name__ == '__main__':  # tests {{{
             isbn_test, title_test, authors_test, comments_test)
     com_tests = [  # {{{
 
+            (   # A kindle edition that does not appear in the search results when searching by ASIN
+                {'identifiers':{'amazon':'B004JHY6OG'}},
+                [title_test('The Heroes: A First Law Novel', exact=True)]
+            ),
+
             (  # + in title and uses id="main-image" for cover
-             {'title':'C++ Concurrency in Action'},
-             [title_test('C++ Concurrency in Action: Practical Multithreading',
-                         exact=True),
-              ]
-             ),
+                {'identifiers':{'amazon':'1933988770'}},
+                [title_test('C++ Concurrency in Action: Practical Multithreading', exact=True)]
+            ),
 
 
             (  # noscript description
@@ -1123,16 +1209,17 @@ if __name__ == '__main__':  # tests {{{
                     authors_test(['F. Scott Fitzgerald'])]
             ),
 
-            (  # A newer book
-                {'identifiers':{'amazon': 'B004JHY6OG'}},
-                [title_test('The Heroes', exact=False),
-                    authors_test(['Joe Abercrombie'])]
-
-            ),
-
     ]  # }}}
 
     de_tests = [  # {{{
+            (
+                {'identifiers':{'isbn': '9783453314979'}},
+                [title_test('Die letzten Wächter: Roman',
+                    exact=False), authors_test(['Sergej Lukianenko', 'Christiane Pöhlmann'])
+                 ]
+
+            ),
+
             (
                 {'identifiers':{'isbn': '3548283519'}},
                 [title_test('Wer Wind Sät: Der Fünfte Fall Für Bodenstein Und Kirchhoff',
@@ -1201,13 +1288,23 @@ if __name__ == '__main__':  # tests {{{
             ),
     ]  # }}}
 
+    nl_tests = [  # {{{
+            (
+                {'title':'Freakonomics'},
+                [title_test('Freakonomics',
+                    exact=True), authors_test(['Steven Levitt & Stephen Dubner & R. Kuitenbrouwer & O. Brenninkmeijer & A. van Den Berg'])
+                 ]
+
+            ),
+    ]  # }}}
+
     def do_test(domain, start=0, stop=None):
         tests = globals().get(domain+'_tests')
         if stop is None:
             stop = len(tests)
         tests = tests[start:stop]
         test_identify_plugin(Amazon.name, tests, modify_plugin=lambda
-                p:setattr(p, 'testing_domain', domain))
+                p:(setattr(p, 'testing_domain', domain), setattr(p, 'touched_fields', p.touched_fields - {'tags'})))
 
     do_test('com')
 

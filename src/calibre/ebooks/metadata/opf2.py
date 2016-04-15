@@ -1,4 +1,4 @@
-#!/usr/bin/env  python
+#!/usr/bin/env  python2
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
 __docformat__ = 'restructuredtext en'
@@ -13,6 +13,7 @@ from urlparse import urlparse
 
 from lxml import etree
 
+from calibre.ebooks import escape_xpath_attr
 from calibre.ebooks.chardet import xml_to_unicode
 from calibre.constants import __appname__, __version__, filesystem_encoding
 from calibre.ebooks.metadata.toc import TOC
@@ -1120,7 +1121,7 @@ class OPF(object):  # {{{
                 uuid_elem = self.root.attrib[attr]
                 break
         if uuid_elem:
-            matches = self.root.xpath('//*[@id=%r]'%uuid_elem)
+            matches = self.root.xpath('//*[@id=%s]'%escape_xpath_attr(uuid_elem))
             if matches:
                 for m in matches:
                     raw = m.text
@@ -1175,6 +1176,12 @@ class OPF(object):  # {{{
                 if item.get('href', None) == cover_id:
                     mt = item.get('media-type', '')
                     if mt and mt.startswith('image/'):
+                        return item.get('href', None)
+        elif self.package_version >= 3.0:
+            for item in self.itermanifest():
+                if item.get('properties') == 'cover-image':
+                    mt = item.get('media-type', '')
+                    if mt and 'xml' not in mt and 'html' not in mt:
                         return item.get('href', None)
 
     @dynamic_property
@@ -1242,6 +1249,19 @@ class OPF(object):  # {{{
             if c is not None:
                 del a['content']
                 a['content'] = c
+        # The PocketBook requires calibre:series_index to come after
+        # calibre:series or it fails to read series info
+        # We swap attributes instead of elements, as that avoids namespace
+        # re-declarations
+        smap = {}
+        for child in self.metadata.xpath('./*[@name="calibre:series" or @name="calibre:series_index"]'):
+            smap[child.get('name')] = (child, self.metadata.index(child))
+        if len(smap) == 2 and smap['calibre:series'][1] > smap['calibre:series_index'][1]:
+            s, si = smap['calibre:series'][0], smap['calibre:series_index'][0]
+            def swap(attr):
+                t = s.get(attr, '')
+                s.set(attr, si.get(attr, '')), si.set(attr, t)
+            swap('name'), swap('content')
 
         self.write_user_metadata()
         if pretty_print_opf:
@@ -1257,9 +1277,9 @@ class OPF(object):  # {{{
                      'isbn', 'tags', 'category', 'comments', 'book_producer',
                      'pubdate', 'user_categories', 'author_link_map'):
             val = getattr(mi, attr, None)
-            is_null = val is None or val in ((), [], (None, None), {})
+            is_null = val is None or val in ((), [], (None, None), {}) or (attr == 'rating' and val < 0.1)
             if is_null:
-                if apply_null and attr in {'series', 'tags', 'isbn', 'comments', 'publisher'}:
+                if apply_null and attr in {'series', 'tags', 'isbn', 'comments', 'publisher', 'rating'}:
                     setattr(self, attr, ([] if attr == 'tags' else None))
             else:
                 setattr(self, attr, val)
@@ -1376,7 +1396,7 @@ class OPFCreator(Metadata):
         self.guide.set_basedir(self.base_path)
 
     def render(self, opf_stream=sys.stdout, ncx_stream=None,
-               ncx_manifest_entry=None, encoding=None):
+               ncx_manifest_entry=None, encoding=None, process_guide=None):
         if encoding is None:
             encoding = 'utf-8'
         toc = getattr(self, 'toc', None)
@@ -1474,7 +1494,10 @@ class OPFCreator(Metadata):
         manifest = E.manifest()
         if self.manifest is not None:
             for ref in self.manifest:
-                item = E.item(id=str(ref.id), href=ref.href())
+                href = ref.href()
+                if isinstance(href, bytes):
+                    href = href.decode('utf-8')
+                item = E.item(id=str(ref.id), href=href)
                 item.set('media-type', ref.mime_type)
                 manifest.append(item)
         spine = E.spine()
@@ -1496,6 +1519,8 @@ class OPFCreator(Metadata):
                 if ref.title:
                     item.set('title', ref.title)
                 guide.append(item)
+        if process_guide is not None:
+            process_guide(E, guide)
 
         serialize_user_metadata(metadata, self.get_all_user_metadata(False))
 

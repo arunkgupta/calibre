@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -101,7 +101,7 @@ def drag_data(self):
     selected = self.get_selected_ids()
     ids = ' '.join(map(str, selected))
     md = QMimeData()
-    md.setData('application/calibre+from_library', ids)
+    md.setData('application/calibre+from_library', ids.encode('utf-8'))
     fmt = prefs['output_format']
 
     def url_for_id(i):
@@ -325,7 +325,7 @@ class CoverDelegate(QStyledItemDelegate):
     def __init__(self, parent):
         super(CoverDelegate, self).__init__(parent)
         self._animated_size = 1.0
-        self.animation = QPropertyAnimation(self, 'animated_size', self)
+        self.animation = QPropertyAnimation(self, b'animated_size', self)
         self.animation.setEasingCurve(QEasingCurve.OutInCirc)
         self.animation.setDuration(500)
         self.set_dimensions()

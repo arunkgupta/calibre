@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -7,6 +7,8 @@ from future_builtins import map
 __license__   = 'GPL v3'
 __copyright__ = '2011, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
+
+from itertools import chain
 
 from calibre import as_unicode
 
@@ -116,6 +118,7 @@ class Form(object):
         self.radio_controls = {name:RadioControl(name, [z.qwe for z in rc if z.name == name]) for name in rc_names}
         selects = list(map(SelectControl, qwe.findAll('select')))
         self.select_controls = {x.name:x for x in selects}
+        self.button_controls = list(map(Control, qwe.findAll('button')))
 
     @property
     def controls(self):
@@ -173,7 +176,7 @@ class Form(object):
             sc = self.qwe.findFirst(submit_control_selector)
             if not sc.isNull():
                 return sc
-        for c in self.input_controls:
+        for c in chain(self.input_controls, self.button_controls):
             if c.type == 'submit':
                 return c
         for c in self.input_controls:

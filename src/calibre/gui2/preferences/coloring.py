@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -303,7 +303,7 @@ class RuleEditor(QDialog):  # {{{
         self.setLayout(l)
 
         self.l1 = l1 = QLabel(_('Create a {0} rule by'
-            ' filling in the boxes below'.format(rule_text)))
+            ' filling in the boxes below').format(rule_text))
         l.addWidget(l1, 0, 0, 1, 8)
 
         self.f1 = QFrame(self)
@@ -493,21 +493,23 @@ class RuleEditor(QDialog):  # {{{
             <span style="color: {c}; background-color: {bg2}">&nbsp;{st}&nbsp;</span>
             '''.format(c=c, bg1=bg1, bg2=bg2, st=_('Sample Text')))
 
+    def sanitize_icon_file_name(self, icon_path):
+        n = lower(sanitize_file_name_unicode(
+                             os.path.splitext(
+                                   os.path.basename(icon_path))[0]+'.png'))
+        return n.replace("'", '_')
+
     def filename_button_clicked(self):
         try:
             path = choose_files(self, 'choose_category_icon',
                         _('Select Icon'), filters=[
-                        ('Images', ['png', 'gif', 'jpg', 'jpeg'])],
+                        (_('Images'), ['png', 'gif', 'jpg', 'jpeg'])],
                     all_files=False, select_only_single_file=True)
             if path:
                 icon_path = path[0]
-                icon_name = lower(sanitize_file_name_unicode(
-                             os.path.splitext(
-                                   os.path.basename(icon_path))[0]+'.png'))
+                icon_name = self.sanitize_icon_file_name(icon_path)
                 if icon_name not in self.icon_file_names:
                     self.icon_file_names.append(icon_name)
-                    self.update_filename_box()
-                    self.update_remove_button()
                     try:
                         p = QIcon(icon_path).pixmap(QSize(128, 128))
                         d = self.icon_folder
@@ -519,6 +521,8 @@ class RuleEditor(QDialog):  # {{{
                     except:
                         import traceback
                         traceback.print_exc()
+                    self.update_filename_box()
+                    self.update_remove_button()
                 if self.doing_multiple:
                     if icon_name not in self.rule_icon_files:
                         self.rule_icon_files.append(icon_name)
@@ -832,6 +836,10 @@ class RulesModel(QAbstractListModel):  # {{{
                 else:
                     continue
                 break
+        if action_name == Rule.INVALID_CONDITION:
+            return (
+                _('<li>The condition using column <b>%(col)s</b> is <b>invalid</b>')
+                % dict(col=c))
         return (
             _('<li>If the <b>%(col)s</b> column <b>%(action)s</b> value: <b>%(val)s</b>') % dict(
                 col=c, action=action_name, val=prepare_string_for_xml(v)))
@@ -860,7 +868,7 @@ class EditRules(QWidget):  # {{{
         self.add_button = QPushButton(QIcon(I('plus.png')), _('Add Rule'),
                 self)
         self.remove_button = QPushButton(QIcon(I('minus.png')),
-                _('Remove Rule'), self)
+                _('Remove Rule(s)'), self)
         self.add_button.clicked.connect(self.add_rule)
         self.remove_button.clicked.connect(self.remove_rule)
         l.addWidget(self.add_button, l.rowCount(), 0)
@@ -869,7 +877,7 @@ class EditRules(QWidget):  # {{{
         self.g = g = QGridLayout()
         self.rules_view = QListView(self)
         self.rules_view.doubleClicked.connect(self.edit_rule)
-        self.rules_view.setSelectionMode(self.rules_view.SingleSelection)
+        self.rules_view.setSelectionMode(self.rules_view.ExtendedSelection)
         self.rules_view.setAlternatingRowColors(True)
         self.rtfd = RichTextDelegate(parent=self.rules_view, max_width=400)
         self.rules_view.setItemDelegate(self.rtfd)
@@ -925,7 +933,7 @@ class EditRules(QWidget):  # {{{
             self.enabled.setText(_('Show &emblems next to the covers'))
             self.enabled.stateChanged.connect(self.enabled_toggled)
             self.enabled.setToolTip(_(
-                'If checked, you can tell calibre to displays icons of your choosing'
+                'If checked, you can tell calibre to display icons of your choosing'
                 ' next to the covers shown in the cover grid, controlled by the'
                 ' metadata of the book.'))
             self.enabled_toggled()
@@ -999,12 +1007,13 @@ class EditRules(QWidget):  # {{{
             error_dialog(self, _('No rule selected'),
                     _('No rule selected for %s.')%txt, show=True)
             return None
-        return rows[0]
+        return sorted(rows, reverse=True)
 
     def remove_rule(self):
-        row = self.get_selected_row(_('removal'))
-        if row is not None:
-            self.model.remove_rule(row)
+        rows = self.get_selected_row(_('removal'))
+        if rows is not None:
+            for row in rows:
+                self.model.remove_rule(row)
             self.changed.emit()
 
     def move_up(self):

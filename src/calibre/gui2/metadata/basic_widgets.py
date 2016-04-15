@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -461,6 +461,7 @@ class AuthorSortEdit(EnLineEdit, ToMetadataMixin):
         a_to_as.triggered.connect(self.author_to_sort)
         as_to_a.triggered.connect(self.sort_to_author)
         self.original_val = ''
+        self.first_time = True
         self.update_state()
 
     @dynamic_property
@@ -480,8 +481,9 @@ class AuthorSortEdit(EnLineEdit, ToMetadataMixin):
     def update_state_and_val(self):
         # Handle case change if the authors box changed
         aus = authors_to_sort_string(self.authors_edit.current_val)
-        if strcmp(aus, self.current_val) == 0:
+        if not self.first_time and strcmp(aus, self.current_val) == 0:
             self.current_val = aus
+        self.first_time = False
         self.update_state()
 
     def update_state(self, *args):
@@ -489,7 +491,7 @@ class AuthorSortEdit(EnLineEdit, ToMetadataMixin):
         au = re.sub(r'\s+et al\.$', '', au)
         au = self.db.author_sort_from_authors(string_to_authors(au))
 
-        normal = strcmp(au, self.current_val) == 0
+        normal = au == self.current_val
         col = OK_COLOR if normal else ERR_COLOR
         self.setStyleSheet(INDICATOR_SHEET % col)
         tt = self.tooltips[0 if normal else 1]
@@ -531,6 +533,7 @@ class AuthorSortEdit(EnLineEdit, ToMetadataMixin):
     def initialize(self, db, id_):
         self.current_val = db.author_sort(id_, index_is_id=True)
         self.original_val = self.current_val
+        self.first_time = True
 
     def commit(self, db, id_):
         aus = self.current_val
@@ -1086,8 +1089,8 @@ class Cover(ImageView):  # {{{
                 cover = cf.read()
             except IOError as e:
                 d = error_dialog(self, _('Error reading file'),
-                        _("<p>There was an error reading from file: <br /><b>")
-                        + _file + "</b></p><br />"+str(e))
+                        _("<p>There was an error reading from file: <br /><b>") +
+                                 _file + "</b></p><br />"+str(e))
                 d.exec_()
             if cover:
                 orig = self.current_val
@@ -1203,6 +1206,7 @@ class Cover(ImageView):  # {{{
 class CommentsEdit(Editor, ToMetadataMixin):  # {{{
 
     FIELD_NAME = 'comments'
+    toolbar_prefs_name = 'metadata-comments-editor-widget-hidden-toolbars'
 
     @dynamic_property
     def current_val(self):
@@ -1585,6 +1589,10 @@ class PublisherEdit(EditWithComplete, ToMetadataMixin):  # {{{
         self.setSizeAdjustPolicy(
                 self.AdjustToMinimumContentsLengthWithIcon)
         self.books_to_refresh = set([])
+        self.clear_button = QToolButton(parent)
+        self.clear_button.setIcon(QIcon(I('trash.png')))
+        self.clear_button.setToolTip(_('Clear publisher'))
+        self.clear_button.clicked.connect(self.clearEditText)
 
     @dynamic_property
     def current_val(self):

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement
 
@@ -38,7 +38,7 @@ def set_metadata(stream, mi):
                 mi.title, mi.authors, mi.book_producer, mi.tags, xmp_packet))
             touched = result['result']
         except WorkerError as e:
-            raise Exception('Failed to set PDF metadata: %s'%e.orig_tb)
+            raise Exception('Failed to set PDF metadata in (%s): %s'%(mi.title, e.orig_tb))
         if touched:
             with open(os.path.join(tdir, u'output.pdf'), 'rb') as f:
                 f.seek(0, 2)
@@ -118,6 +118,14 @@ def get_xmp_metadata(path):
         raw = f.read()
     p.load(raw)
     return p.get_xmp_metadata()
+
+def get_image_count(path):
+    podofo = get_podofo()
+    p = podofo.PDFDoc()
+    with open(path, 'rb') as f:
+        raw = f.read()
+    p.load(raw)
+    return p.image_count()
 
 def test_outline(src):
     podofo = get_podofo()

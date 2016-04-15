@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement
 
@@ -204,8 +204,11 @@ def get_builtin_recipe_titles():
     return [r.get('title') for r in get_builtin_recipe_collection()]
 
 def download_builtin_recipe(urn):
+    from calibre.utils.config_base import prefs
     from calibre.utils.https import get_https_resource_securely
-    return get_https_resource_securely('https://status.calibre-ebook.com/recipe/'+urn)
+    import bz2
+    return bz2.decompress(get_https_resource_securely(
+        'https://code.calibre-ebook.com/recipe-compressed/'+urn, headers={'CALIBRE-INSTALL-UUID':prefs['installation_uuid']}))
 
 def get_builtin_recipe(urn):
     with zipfile.ZipFile(P('builtin_recipes.zip', allow_user_override=False), 'r') as zf:

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -8,7 +8,7 @@ __docformat__ = 'restructuredtext en'
 from functools import partial
 
 from PyQt5.Qt import (QIcon, Qt, QWidget, QSize,
-    pyqtSignal, QToolButton, QMenu, QAction,
+    pyqtSignal, QToolButton, QMenu, QAction, QCoreApplication,
     QObject, QVBoxLayout, QSizePolicy, QLabel, QHBoxLayout, QActionGroup)
 
 
@@ -304,10 +304,24 @@ class MainWindowMixin(object):  # {{{
                 pass  # PyQt5 seems to be missing this property
 
         l = self.centralwidget.layout()
+
+        # And now, start adding the real widgets
         l.addWidget(self.search_bar)
 
+        # Add in the widget for the shutdown messages. It is invisible until a
+        # message is shown
+        smw = self.shutdown_message_widget = QLabel(self)
+        smw.setAlignment(Qt.AlignCenter)
+        smw.setVisible(False)
+        smw.setAutoFillBackground(True)
+        smw.setStyleSheet('QLabel { background-color: rgba(200, 200, 200, 200); color: black }')
+
+    def show_shutdown_message(self, message=''):
+        smw = self.shutdown_message_widget
+        smw.setGeometry(0, 0, self.width(), self.height())
+        smw.setVisible(True)
+        smw.raise_()
+        smw.setText(_('<h2>Shutting down</h2><div>') + message)
+        # Force processing the events needed to show the message
+        QCoreApplication.processEvents()
 # }}}
-
-
-
-

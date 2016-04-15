@@ -6,7 +6,7 @@ __license__   = 'GPL v3'
 __copyright__ = '2008, Marshall T. Vandegrift <llasram@gmail.com>'
 __docformat__ = 'restructuredtext en'
 
-import os, re, uuid, logging
+import os, re, logging
 from collections import defaultdict
 from itertools import count
 from urlparse import urldefrag, urlparse, urlunparse, urljoin
@@ -21,6 +21,7 @@ from calibre import (isbytestring, as_unicode, get_types_map)
 from calibre.ebooks.oeb.parse_utils import (barename, XHTML_NS, RECOVER_PARSER,
         namespace, XHTML, parse_html, NotHTML)
 from calibre.utils.cleantext import clean_xml_chars
+from calibre.utils.short_uuid import uuid4
 
 XML_NS       = 'http://www.w3.org/XML/1998/namespace'
 OEB_DOC_NS   = 'http://openebook.org/namespaces/oeb-document/1.0/'
@@ -100,13 +101,15 @@ def close_self_closing_tags(raw):
     return _self_closing_pat.sub(r'<\g<tag>\g<arg>></\g<tag>>', raw)
 
 def uuid_id():
-    return 'u'+unicode(uuid.uuid4())
+    return u'u'+uuid4()
 
 def itercsslinks(raw):
     for match in _css_url_re.finditer(raw):
         yield match.group(1), match.start(1)
     for match in _css_import_re.finditer(raw):
         yield match.group(1), match.start(1)
+
+_link_attrs = set(html.defs.link_attrs) | {XLINK('href'), 'poster'}
 
 def iterlinks(root, find_links_in_css=True):
     '''
@@ -115,7 +118,6 @@ def iterlinks(root, find_links_in_css=True):
     :param root: A valid lxml.etree element.
     '''
     assert etree.iselement(root)
-    link_attrs = set(html.defs.link_attrs) | {XLINK('href'), 'poster'}
 
     for el in root.iter():
         attribs = el.attrib
@@ -145,7 +147,7 @@ def iterlinks(root, find_links_in_css=True):
                     yield (el, 'archive', value, match.start())
         else:
             for attr in attribs:
-                if attr in link_attrs:
+                if attr in _link_attrs:
                     yield (el, attr, attribs[attr], 0)
 
         if not find_links_in_css:
@@ -241,20 +243,19 @@ def rewrite_links(root, link_repl_func, resolve_base_href=False):
                 repl = repl.decode('utf-8')
             el.text = '\n'+ clean_xml_chars(repl) + '\n'
 
-        if 'style' in el.attrib:
-            text = el.attrib['style']
-            if _css_url_re.search(text) is not None:
-                try:
-                    stext = parser.parseStyle(text, validate=False)
-                except:
-                    # Parsing errors are raised by cssutils
-                    continue
-                replaceUrls(stext, link_repl_func)
-                repl = stext.cssText.replace('\n', ' ').replace('\r',
-                        ' ')
-                if isbytestring(repl):
-                    repl = repl.decode('utf-8')
-                el.attrib['style'] = repl
+        text = el.get('style')
+        if text and _css_url_re.search(text) is not None:
+            try:
+                stext = parser.parseStyle(text, validate=False)
+            except Exception:
+                # Parsing errors are raised by cssutils
+                continue
+            replaceUrls(stext, link_repl_func)
+            repl = stext.cssText.replace('\n', ' ').replace('\r',
+                    ' ')
+            if isbytestring(repl):
+                repl = repl.decode('utf-8')
+            el.set('style', repl)
 
 
 types_map = get_types_map()
@@ -347,13 +348,17 @@ def xml2unicode(root, pretty_print=False):
 def xml2text(elem):
     return etree.tostring(elem, method='text', encoding=unicode, with_tail=False)
 
+def escape_cdata(root):
+    pat = re.compile(r'[<>&]')
+    for elem in root.iterdescendants('{%s}style' % XHTML_NS, '{%s}script' % XHTML_NS):
+        if elem.text and pat.search(elem.text) is not None:
+            elem.text = etree.CDATA(elem.text)
+
 def serialize(data, media_type, pretty_print=False):
     if isinstance(data, etree._Element):
         is_oeb_doc = media_type in OEB_DOCS
         if is_oeb_doc:
-            for style in data.iterfind('.//{http://www.w3.org/1999/xhtml}style'):
-                if style.text and re.search(r'[<>&]', style.text) is not None:
-                    style.text = etree.CDATA(style.text)
+            escape_cdata(data)
         ans = xml2str(data, pretty_print=pretty_print)
         if is_oeb_doc:
             # Convert self closing div|span|a|video|audio|iframe|etc tags
@@ -410,7 +415,10 @@ def urlnormalize(href):
     """Convert a URL into normalized form, with all and only URL-unsafe
     characters URL quoted.
     """
-    parts = urlparse(href)
+    try:
+        parts = urlparse(href)
+    except ValueError as e:
+        raise ValueError('Failed to parse the URL: %r with underlying error: %s' % (href, as_unicode(e)))
     if not parts.scheme or parts.scheme == 'file':
         path, frag = urldefrag(href)
         parts = ('', '', path, '', '', frag)
@@ -924,13 +932,12 @@ class Manifest(object):
             log.raiseExceptions = False
             self.oeb.log.debug('Parsing', self.href, '...')
             data = self.oeb.decode(data)
-            data = self.oeb.css_preprocessor(data, add_namespace=True)
+            data = self.oeb.css_preprocessor(data, add_namespace=False)
             parser = CSSParser(loglevel=logging.WARNING,
                                fetcher=self.override_css_fetch or self._fetch_css,
                                log=_css_logger)
             data = parser.parseString(data, href=self.href, validate=False)
             data = resolveImports(data)
-            data.namespaces['h'] = XHTML_NS
             for rule in tuple(data.cssRules.rulesOfType(CSSRule.PAGE_RULE)):
                 data.cssRules.remove(rule)
             return data
@@ -1055,9 +1062,10 @@ class Manifest(object):
                 return href
             if '/' not in self.href:
                 return href
-            base = os.path.dirname(self.href).split('/')
+            base = filter(None, os.path.dirname(os.path.normpath(self.href)).replace(os.sep, '/').split('/'))
             target, frag = urldefrag(href)
             target = target.split('/')
+            index = 0
             for index in xrange(min(len(base), len(target))):
                 if base[index] != target[index]:
                     break

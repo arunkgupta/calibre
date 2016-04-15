@@ -54,9 +54,12 @@ def get_cover_data(stream, ext):  # {{{
     return cdata, area
 # }}}
 
-Settings = namedtuple('Settings', 'remove_all remove add au aus do_aus rating pub do_series do_autonumber do_remove_format '
-                      'remove_format do_swap_ta do_remove_conv do_auto_author series do_series_restart series_start_value '
-                      'do_title_case cover_action clear_series clear_pub pubdate adddate do_title_sort languages clear_languages restore_original comments')
+Settings = namedtuple('Settings',
+    'remove_all remove add au aus do_aus rating pub do_series do_autonumber do_remove_format '
+    'remove_format do_swap_ta do_remove_conv do_auto_author series do_series_restart series_start_value series_increment '
+    'do_title_case cover_action clear_series clear_pub pubdate adddate do_title_sort languages clear_languages '
+    'restore_original comments generate_cover_settings')
+
 null = object()
 
 class MyBlockingBusy(QDialog):  # {{{
@@ -179,7 +182,7 @@ class MyBlockingBusy(QDialog):  # {{{
             from calibre.ebooks.covers import generate_cover
             for book_id in self.ids:
                 mi = self.db.get_metadata(book_id, index_is_id=True)
-                cdata = generate_cover(mi)
+                cdata = generate_cover(mi, prefs=args.generate_cover_settings)
                 cache.set_cover({book_id:cdata})
         elif args.cover_action == 'fromfmt':
             for book_id in self.ids:
@@ -253,7 +256,7 @@ class MyBlockingBusy(QDialog):  # {{{
             else:
                 def next_series_num(bid, i):
                     if args.do_series_restart:
-                        return sval + i
+                        return sval + (i * args.series_increment)
                     next_num = _get_next_series_num_for_list(sorted(sval.itervalues()), unwrap=False)
                     sval[bid] = next_num
                     return next_num
@@ -352,6 +355,8 @@ class MetadataBulkDialog(ResizableDialog, Ui_MetadataBulkDialog):
         self.pubdate.dateTimeChanged.connect(self.do_apply_pubdate)
         self.adddate.setDateTime(QDateTime.currentDateTime())
         self.adddate.setMinimumDateTime(UNDEFINED_QDATETIME)
+        self.adddate_cw = CalendarWidget(self.adddate)
+        self.adddate.setCalendarWidget(self.adddate_cw)
         adddate_format = tweaks['gui_timestamp_display_format']
         if adddate_format is not None:
             self.adddate.setDisplayFormat(adddate_format)
@@ -380,7 +385,16 @@ class MetadataBulkDialog(ResizableDialog, Ui_MetadataBulkDialog):
         self.languages.init_langs(self.db)
         self.languages.setEditText('')
         self.authors.setFocus(Qt.OtherFocusReason)
+        self.generate_cover_settings = None
+        self.button_config_cover_gen.setVisible(False)
+        self.button_config_cover_gen.clicked.connect(self.customize_cover_generation)
         self.exec_()
+
+    def customize_cover_generation(self):
+        from calibre.gui2.covers import CoverSettingsDialog
+        d = CoverSettingsDialog(parent=self)
+        if d.exec_() == d.Accepted:
+            self.generate_cover_settings = d.prefs_for_rendering
 
     def set_comments(self):
         from calibre.gui2.dialogs.comments_dialog import CommentsDialog
@@ -428,9 +442,9 @@ class MetadataBulkDialog(ResizableDialog, Ui_MetadataBulkDialog):
         fm = self.db.field_metadata
         for f in fm:
             if (f in ['author_sort'] or
-                    (fm[f]['datatype'] in ['text', 'series', 'enumeration', 'comments']
-                     and fm[f].get('search_terms', None)
-                     and f not in ['formats', 'ondevice', 'series_sort']) or
+                    (fm[f]['datatype'] in ['text', 'series', 'enumeration', 'comments'] and
+                     fm[f].get('search_terms', None) and
+                     f not in ['formats', 'ondevice', 'series_sort']) or
                     (fm[f]['datatype'] in ['int', 'float', 'bool', 'datetime'] and
                      f not in ['id', 'timestamp'])):
                 self.all_fields.append(f)
@@ -916,14 +930,15 @@ class MetadataBulkDialog(ResizableDialog, Ui_MetadataBulkDialog):
             self.remove_tags.update_items_cache(self.db.all_tags())
 
     def auto_number_changed(self, state):
+        self.series_start_number.setEnabled(bool(state))
+        self.series_increment.setEnabled(bool(state))
         if state:
             self.series_numbering_restarts.setEnabled(True)
-            self.series_start_number.setEnabled(True)
         else:
             self.series_numbering_restarts.setEnabled(False)
             self.series_numbering_restarts.setChecked(False)
-            self.series_start_number.setEnabled(False)
-            self.series_start_number.setValue(1)
+            self.series_start_number.setValue(1.0)
+            self.series_increment.setValue(1.0)
 
     def reject(self):
         self.save_state()
@@ -967,6 +982,7 @@ class MetadataBulkDialog(ResizableDialog, Ui_MetadataBulkDialog):
         do_autonumber = self.autonumber_series.isChecked()
         do_series_restart = self.series_numbering_restarts.isChecked()
         series_start_value = self.series_start_number.value()
+        series_increment = self.series_increment.value()
         do_remove_format = self.remove_format.currentIndex() > -1
         remove_format = unicode(self.remove_format.currentText())
         do_swap_ta = self.swap_title_and_author.isChecked()
@@ -998,9 +1014,9 @@ class MetadataBulkDialog(ResizableDialog, Ui_MetadataBulkDialog):
         args = Settings(remove_all, remove, add, au, aus, do_aus, rating, pub, do_series,
                 do_autonumber, do_remove_format, remove_format, do_swap_ta,
                 do_remove_conv, do_auto_author, series, do_series_restart,
-                series_start_value, do_title_case, cover_action, clear_series, clear_pub,
+                series_start_value, series_increment, do_title_case, cover_action, clear_series, clear_pub,
                 pubdate, adddate, do_title_sort, languages, clear_languages,
-                restore_original, self.comments)
+                restore_original, self.comments, self.generate_cover_settings)
 
         self.set_field_calls = defaultdict(dict)
         bb = MyBlockingBusy(args, self.ids, self.db, self.refresh_books,

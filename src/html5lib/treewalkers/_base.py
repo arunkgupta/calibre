@@ -1,8 +1,13 @@
 from __future__ import absolute_import, division, unicode_literals
-from six import text_type, string_types
+try:
+    text_type = unicode
+    string_types = basestring,
+except NameError:
+    text_type = str
+    string_types = str,
 
-import gettext
-_ = gettext.gettext
+__all__ = ["DOCUMENT", "DOCTYPE", "TEXT", "ELEMENT", "COMMENT", "ENTITY", "UNKNOWN",
+           "TreeWalker", "NonRecursiveTreeWalker"]
 
 from xml.dom import Node
 
@@ -58,7 +63,7 @@ class TreeWalker(object):
                "namespace": to_text(namespace),
                "data": attrs}
         if hasChildren:
-            yield self.error(_("Void element has children"))
+            yield self.error("Void element has children")
 
     def startTag(self, namespace, name, attrs):
         assert namespace is None or isinstance(namespace, string_types), type(namespace)
@@ -122,7 +127,7 @@ class TreeWalker(object):
         return {"type": "Entity", "name": text_type(name)}
 
     def unknown(self, nodeType):
-        return self.error(_("Unknown node type: ") + nodeType)
+        return self.error("Unknown node type: " + nodeType)
 
 
 class NonRecursiveTreeWalker(TreeWalker):

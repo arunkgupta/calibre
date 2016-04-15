@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -12,7 +12,8 @@ from PyQt5.Qt import Qt, QAction, pyqtSignal
 
 from calibre.constants import isosx, iswindows
 from calibre.gui2 import (
-    error_dialog, Dispatcher, question_dialog, config, open_local_file, info_dialog)
+    error_dialog, Dispatcher, question_dialog, config, open_local_file,
+    info_dialog, elided_text)
 from calibre.gui2.dialogs.choose_format import ChooseFormatDialog
 from calibre.utils.config import prefs, tweaks
 from calibre.ptempfile import PersistentTemporaryFile
@@ -66,15 +67,16 @@ class ViewAction(InterfaceAction):
         if history:
             self.view_menu.insertAction(self.clear_sep2, self.clear_sep1)
             self.history_actions.append(self.clear_sep1)
+            fm = self.gui.fontMetrics()
             for id_, title in history:
-                ac = HistoryAction(id_, title, self.view_menu)
+                ac = HistoryAction(id_, elided_text(title, font=fm, pos='right'), self.view_menu)
                 self.view_menu.insertAction(self.clear_sep2, ac)
                 ac.view_historical.connect(self.view_historical)
                 self.history_actions.append(ac)
 
     def clear_history(self):
         db = self.gui.current_db
-        db.prefs['gui_view_history'] = []
+        db.new_api.set_pref('gui_view_history', [])
         self.build_menus(db)
 
     def view_historical(self, id_):
@@ -170,7 +172,7 @@ class ViewAction(InterfaceAction):
                     _('Selected books have no formats'), show=True)
             return
         d = ChooseFormatDialog(self.gui, _('Choose the format to view'),
-                list(sorted(all_fmts)))
+                list(sorted(all_fmts)), show_open_with=True)
         self.gui.book_converted.connect(d.book_converted)
         if d.exec_() == d.Accepted:
             formats = [[x.upper() for x in db.new_api.formats(book_id)] for book_id in book_ids]
@@ -180,13 +182,20 @@ class ViewAction(InterfaceAction):
                     formats[i]]
             if self._view_check(len(rows)):
                 for row in rows:
-                    self.view_format(row, fmt)
+                    if d.open_with_format is None:
+                        self.view_format(row, fmt)
+                    else:
+                        self.open_fmt_with(row, *d.open_with_format)
                 if len(rows) < orig_num:
                     info_dialog(self.gui, _('Format unavailable'),
                             _('Not all the selected books were available in'
                                 ' the %s format. You should convert'
                                 ' them first.')%fmt, show=True)
         self.gui.book_converted.disconnect(d.book_converted)
+
+    def open_fmt_with(self, row, fmt, entry):
+        book_id = self.gui.library_view.model().id(row)
+        self.gui.book_details.open_fmt_with.emit(book_id, fmt, entry)
 
     def _view_check(self, num, max_=3):
         if num <= max_:
@@ -272,12 +281,12 @@ class ViewAction(InterfaceAction):
                     seen.add(title)
                     history.append((id_, title))
 
-            db.prefs['gui_view_history'] = history[:vh]
+            db.new_api.set_pref('gui_view_history', history[:vh])
             self.build_menus(db)
         if remove:
             history = db.prefs.get('gui_view_history', [])
             history = [x for x in history if x[0] not in remove]
-            db.prefs['gui_view_history'] = history[:vh]
+            db.new_api.set_pref('gui_view_history', history[:vh])
             self.build_menus(db)
 
     def view_device_book(self, path):

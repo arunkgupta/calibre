@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -185,9 +185,16 @@ def extract_member(stream, match=re.compile(r'\.(jpg|jpeg|gif|png)\s*$', re.I),
             return h['filename'], et.getvalue()
 
 def extract_first_alphabetically(stream):
+    from calibre.libunzip import sort_key
     names_ = sorted([x for x in names(stream) if os.path.splitext(x)[1][1:].lower() in
-            {'png', 'jpg', 'jpeg', 'gif'}])
+            {'png', 'jpg', 'jpeg', 'gif', 'webp'}], key=sort_key)
     return extract_member(stream, name=names_[0], match=None)
+
+def extract_cover_image(stream):
+    from calibre.libunzip import sort_key, name_ok
+    for name in sorted(names(stream), key=sort_key):
+        if name_ok(name):
+            return extract_member(stream, name=name, match=None)
 
 # Test normal RAR file {{{
 def test_basic():

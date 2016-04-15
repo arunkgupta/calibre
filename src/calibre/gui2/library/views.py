@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -13,7 +13,7 @@ from collections import OrderedDict
 from PyQt5.Qt import (
     QTableView, Qt, QAbstractItemView, QMenu, pyqtSignal, QFont, QModelIndex,
     QIcon, QItemSelection, QMimeData, QDrag, QStyle, QPoint, QUrl, QHeaderView,
-    QStyleOptionHeader, QItemSelectionModel)
+    QStyleOptionHeader, QItemSelectionModel, QSize, QFontMetrics)
 
 from calibre.gui2.library.delegates import (RatingDelegate, PubDateDelegate,
     TextDelegate, DateDelegate, CompleteDelegate, CcTextDelegate,
@@ -24,7 +24,7 @@ from calibre.gui2.library.alternate_views import AlternateViews, setup_dnd_inter
 from calibre.utils.config import tweaks, prefs
 from calibre.gui2 import error_dialog, gprefs, FunctionDispatcher
 from calibre.gui2.library import DEFAULT_SORT
-from calibre.constants import filesystem_encoding, isosx
+from calibre.constants import filesystem_encoding
 from calibre import force_unicode
 
 class HeaderView(QHeaderView):  # {{{
@@ -35,6 +35,7 @@ class HeaderView(QHeaderView):  # {{{
         self.current_font = QFont(self.font())
         self.current_font.setBold(True)
         self.current_font.setItalic(True)
+        self.fm = QFontMetrics(self.current_font)
 
     def event(self, e):
         if e.type() in (e.HoverMove, e.HoverEnter):
@@ -43,6 +44,27 @@ class HeaderView(QHeaderView):  # {{{
             self.hover = -1
         return QHeaderView.event(self, e)
 
+    def sectionSizeFromContents(self, logical_index):
+        self.ensurePolished()
+        opt = QStyleOptionHeader()
+        self.initStyleOption(opt)
+        opt.section = logical_index
+        opt.orientation = self.orientation()
+        opt.fontMetrics = self.fm
+        model = self.parent().model()
+        opt.text = unicode(model.headerData(logical_index, opt.orientation, Qt.DisplayRole) or '')
+        if opt.orientation == Qt.Vertical:
+            try:
+                val = model.headerData(logical_index, opt.orientation, Qt.DecorationRole)
+                if val is not None:
+                    opt.icon = val
+                opt.iconAlignment = Qt.AlignVCenter
+            except (IndexError, ValueError, TypeError):
+                pass
+        if self.isSortIndicatorShown():
+            opt.sortIndicator = QStyleOptionHeader.SortDown
+        return self.style().sizeFromContents(QStyle.CT_HeaderSection, opt, QSize(), self)
+
     def paintSection(self, painter, rect, logical_index):
         opt = QStyleOptionHeader()
         self.initStyleOption(opt)
@@ -50,11 +72,16 @@ class HeaderView(QHeaderView):  # {{{
         opt.section = logical_index
         opt.orientation = self.orientation()
         opt.textAlignment = Qt.AlignHCenter | Qt.AlignVCenter
+        opt.fontMetrics = self.fm
         model = self.parent().model()
-        opt.text = unicode(model.headerData(logical_index, opt.orientation, Qt.DisplayRole) or '')
+        style = self.style()
+        margin = 2 * style.pixelMetric(style.PM_HeaderMargin, None, self)
         if self.isSortIndicatorShown() and self.sortIndicatorSection() == logical_index:
             opt.sortIndicator = QStyleOptionHeader.SortDown if self.sortIndicatorOrder() == Qt.AscendingOrder else QStyleOptionHeader.SortUp
-        opt.text = opt.fontMetrics.elidedText(opt.text, Qt.ElideRight, rect.width() - 4)
+            margin += style.pixelMetric(style.PM_HeaderMarkSize, None, self)
+        opt.text = unicode(model.headerData(logical_index, opt.orientation, Qt.DisplayRole) or '')
+        if self.textElideMode() != Qt.ElideNone:
+            opt.text = opt.fontMetrics.elidedText(opt.text, Qt.ElideRight, rect.width() - margin)
         if self.isEnabled():
             opt.state |= QStyle.State_Enabled
             if self.window().isActiveWindow():
@@ -64,7 +91,9 @@ class HeaderView(QHeaderView):  # {{{
         sm = self.selectionModel()
         if opt.orientation == Qt.Vertical:
             try:
-                opt.icon = model.headerData(logical_index, opt.orientation, Qt.DecorationRole)
+                val = model.headerData(logical_index, opt.orientation, Qt.DecorationRole)
+                if val is not None:
+                    opt.icon = val
                 opt.iconAlignment = Qt.AlignVCenter
             except (IndexError, ValueError, TypeError):
                 pass
@@ -260,6 +289,9 @@ class BooksView(QTableView):  # {{{
         h = self.column_header
 
         if action == 'hide':
+            if h.hiddenSectionCount() >= h.count():
+                return error_dialog(self, _('Cannot hide all columns'), _(
+                    'You must not hide all columns'), show=True)
             h.setSectionHidden(idx, True)
         elif action == 'show':
             h.setSectionHidden(idx, False)
@@ -489,7 +521,7 @@ class BooksView(QTableView):  # {{{
         db = getattr(self.model(), 'db', None)
         name = unicode(self.objectName())
         if name and db is not None:
-            db.prefs.set(name + ' books view state', state)
+            db.new_api.set_pref(name + ' books view state', state)
 
     def save_state(self):
         # Only save if we have been initialized (set_database called)
@@ -610,7 +642,7 @@ class BooksView(QTableView):  # {{{
                     except:
                         pass
                     if ans is not None:
-                        db.prefs[name] = ans
+                        db.new_api.set_pref(name, ans)
                 else:
                     injected = False
                     if not ans.get('last_modified_injected', False):
@@ -626,7 +658,7 @@ class BooksView(QTableView):  # {{{
                         if 'languages' not in hc:
                             hc.append('languages')
                     if injected:
-                        db.prefs[name] = ans
+                        db.new_api.set_pref(name, ans)
         return ans
 
     def restore_state(self):
@@ -1051,7 +1083,7 @@ class BooksView(QTableView):  # {{{
             self.select_rows([id_to_select], using_ids=True)
         elif self._model.highlight_only:
             self.clearSelection()
-        if self.isVisible():
+        if self.isVisible() and getattr(txt, 'as_you_type', False) is not True:
             self.setFocus(Qt.OtherFocusReason)
 
     def connect_to_search_box(self, sb, search_done):
@@ -1070,18 +1102,6 @@ class BooksView(QTableView):  # {{{
     def row_count(self):
         return self._model.count()
 
-    if isosx:
-        # Qt 5 item view handling of return key on OS X seems to be broken
-        # See https://bugreports.qt-project.org/browse/QTBUG-40938
-        def keyPressEvent(self, ev):
-            if ev.key() in (Qt.Key_Enter, Qt.Key_Return) and self.state() != self.EditingState:
-                ci = self.currentIndex()
-                if ci.isValid() and ci.flags() & Qt.ItemIsEditable:
-                    if self.edit(ci, self.EditKeyPressed, ev):
-                        ev.accept()
-                        return
-            return QTableView.keyPressEvent(self, ev)
-
 # }}}
 
 class DeviceBooksView(BooksView):  # {{{
@@ -1094,7 +1114,6 @@ class DeviceBooksView(BooksView):  # {{{
         self._model.resize_rows.connect(self.do_row_sizing,
                                                  type=Qt.QueuedConnection)
         self.can_add_columns = False
-        self.columns_resized = False
         self.resize_on_select = False
         self.rating_delegate = None
         for i in range(10):
@@ -1107,7 +1126,7 @@ class DeviceBooksView(BooksView):  # {{{
         rows = self.selectionModel().selectedRows()
         paths = [force_unicode(p, enc=filesystem_encoding) for p in m.paths(rows) if p]
         md = QMimeData()
-        md.setData('application/calibre+from_device', 'dummy')
+        md.setData('application/calibre+from_device', b'dummy')
         md.setUrls([QUrl.fromLocalFile(p) for p in paths])
         drag = QDrag(self)
         drag.setMimeData(md)
@@ -1142,10 +1161,6 @@ class DeviceBooksView(BooksView):  # {{{
     def set_database(self, db):
         self._model.set_database(db)
         self.restore_state()
-
-    def resizeColumnsToContents(self):
-        QTableView.resizeColumnsToContents(self)
-        self.columns_resized = True
 
     def connect_dirtied_signal(self, slot):
         self._model.booklist_dirtied.connect(slot)

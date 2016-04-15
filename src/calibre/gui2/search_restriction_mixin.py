@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -10,7 +10,7 @@ from functools import partial
 
 from PyQt5.Qt import (
     Qt, QMenu, QPoint, QIcon, QDialog, QGridLayout, QLabel, QLineEdit, QComboBox,
-    QDialogButtonBox, QSize, QVBoxLayout, QListWidget, QRadioButton, QAction)
+    QDialogButtonBox, QSize, QVBoxLayout, QListWidget, QRadioButton, QAction, QTextBrowser)
 
 from calibre.gui2 import error_dialog, question_dialog, gprefs
 from calibre.gui2.dialogs.confirm_delete import confirm
@@ -112,9 +112,9 @@ class CreateVirtualLibrary(QDialog):  # {{{
         gl.addWidget(self.vl_name, 0, 1)
         self.editing = editing
 
-        self.saved_searches_label = QLabel('')
-        self.saved_searches_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        gl.addWidget(self.saved_searches_label, 2, 0, 1, 2)
+        self.saved_searches_label = sl = QTextBrowser(self)
+        sl.viewport().setAutoFillBackground(False)
+        gl.addWidget(sl, 2, 0, 1, 2)
 
         self.la2 = la2 = QLabel(_('&Search expression:'))
         gl.addWidget(la2, 1, 0)
@@ -211,9 +211,9 @@ class CreateVirtualLibrary(QDialog):  # {{{
             else:
                 txt = ''
         if len(searches) > 1:
-            self.saved_searches_label.setText('\n'.join(searches))
+            self.saved_searches_label.setPlainText('\n'.join(searches))
         else:
-            self.saved_searches_label.setText('')
+            self.saved_searches_label.setPlainText('')
 
     def name_text_edited(self, new_name):
         self.new_name = unicode(new_name)
@@ -341,11 +341,12 @@ class SearchRestrictionMixin(object):
         self.ar_menu = QMenu(_('Additional restriction'))
         self.edit_menu = QMenu(_('Edit Virtual Library'))
         self.rm_menu = QMenu(_('Remove Virtual Library'))
+        self.search_restriction_list_built = False
 
     def add_virtual_library(self, db, name, search):
         virt_libs = db.prefs.get('virtual_libraries', {})
         virt_libs[name] = search
-        db.prefs.set('virtual_libraries', virt_libs)
+        db.new_api.set_pref('virtual_libraries', virt_libs)
 
     def do_create_edit(self, name=None):
         db = self.library_view.model().db
@@ -489,7 +490,7 @@ class SearchRestrictionMixin(object):
         db = self.library_view.model().db
         virt_libs = db.prefs.get('virtual_libraries', {})
         virt_libs.pop(name, None)
-        db.prefs.set('virtual_libraries', virt_libs)
+        db.new_api.set_pref('virtual_libraries', virt_libs)
         if reapply and db.data.get_base_restriction_name() == name:
             self.apply_virtual_library('')
         self.rebuild_vl_tabs()
@@ -498,6 +499,7 @@ class SearchRestrictionMixin(object):
         return name[0:MAX_VIRTUAL_LIBRARY_NAME_LENGTH].strip()
 
     def build_search_restriction_list(self):
+        self.search_restriction_list_built = True
         from calibre.gui2.ui import get_gui
         m = self.ar_menu
         m.clear()
@@ -539,6 +541,8 @@ class SearchRestrictionMixin(object):
         self.apply_search_restriction(index)
 
     def apply_named_search_restriction(self, name):
+        if not self.search_restriction_list_built:
+            self.build_search_restriction_list()
         if not name:
             r = 0
         else:
@@ -549,6 +553,8 @@ class SearchRestrictionMixin(object):
         self.apply_search_restriction(r)
 
     def apply_text_search_restriction(self, search):
+        if not self.search_restriction_list_built:
+            self.build_search_restriction_list()
         search = unicode(search)
         if not search:
             self.search_restriction.setCurrentIndex(0)
@@ -567,6 +573,8 @@ class SearchRestrictionMixin(object):
             self._apply_search_restriction(search, self._trim_restriction_name(s))
 
     def apply_search_restriction(self, i):
+        if not self.search_restriction_list_built:
+            self.build_search_restriction_list()
         if i == 1:
             self.apply_text_search_restriction(unicode(self.search.currentText()))
         elif i == 2 and unicode(self.search_restriction.currentText()).startswith('*'):

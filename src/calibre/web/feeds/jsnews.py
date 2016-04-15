@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -29,17 +29,6 @@ def image_data_to_url(data, base='cover'):
             ext = 'jpg'
     ans.name = 'cover.' + ext
     return ans
-
-css_select_cache = {}
-
-def CSSSelect(expr):
-    try:
-        return css_select_cache[expr]
-    except KeyError:
-        from cssselect import HTMLTranslator
-        from lxml.etree import XPath
-        ans = css_select_cache[expr] = XPath(HTMLTranslator().css_to_xpath(expr))
-        return ans
 
 
 class JavascriptRecipe(BasicNewsRecipe):

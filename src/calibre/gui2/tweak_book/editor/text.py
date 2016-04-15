@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -13,11 +13,10 @@ from future_builtins import map
 import regex
 from PyQt5.Qt import (
     QPlainTextEdit, QFontDatabase, QToolTip, QPalette, QFont, QKeySequence,
-    QTextEdit, QTextFormat, QWidget, QSize, QPainter, Qt, QRect, pyqtSlot,
-    QApplication, QMimeData, QColor, QColorDialog, QTimer, pyqtSignal, QT_VERSION)
+    QTextEdit, QTextFormat, QWidget, QSize, QPainter, Qt, QRect, QColor,
+    QColorDialog, QTimer, pyqtSignal)
 
 from calibre import prepare_string_for_xml
-from calibre.constants import isosx
 from calibre.gui2.tweak_book import tprefs, TOP
 from calibre.gui2.tweak_book.completion.popup import CompletionPopup
 from calibre.gui2.tweak_book.editor import (
@@ -25,11 +24,12 @@ from calibre.gui2.tweak_book.editor import (
 from calibre.gui2.tweak_book.editor.themes import get_theme, theme_color, theme_format
 from calibre.gui2.tweak_book.editor.syntax.base import SyntaxHighlighter
 from calibre.gui2.tweak_book.editor.smarts import NullSmarts
+from calibre.gui2.tweak_book.editor.snippets import SnippetManager
+from calibre.gui2.tweak_book.widgets import PlainTextEdit, PARAGRAPH_SEPARATOR
 from calibre.spell.break_iterator import index_of
 from calibre.utils.icu import safe_chr, string_length, capitalize, upper, lower, swapcase
 from calibre.utils.titlecase import titlecase
 
-PARAGRAPH_SEPARATOR = '\u2029'
 
 def get_highlighter(syntax):
     if syntax:
@@ -72,66 +72,6 @@ class LineNumbers(QWidget):  # {{{
         self.parent().paint_line_numbers(ev)
 # }}}
 
-class PlainTextEdit(QPlainTextEdit):
-
-    ''' A class that overrides some methods from QPlainTextEdit to fix handling
-    of the nbsp unicode character. '''
-
-    def __init__(self, parent=None):
-        QPlainTextEdit.__init__(self, parent)
-        self.selectionChanged.connect(self.selection_changed)
-
-    def toPlainText(self):
-        # QPlainTextEdit's toPlainText implementation replaces nbsp with normal
-        # space, so we re-implement it using QTextCursor, which does not do
-        # that
-        c = self.textCursor()
-        c.clearSelection()
-        c.movePosition(c.Start)
-        c.movePosition(c.End, c.KeepAnchor)
-        ans = c.selectedText().replace(PARAGRAPH_SEPARATOR, '\n')
-        # QTextCursor pads the return value of selectedText with null bytes if
-        # non BMP characters such as 0x1f431 are present.
-        return ans.rstrip('\0')
-
-    @pyqtSlot()
-    def copy(self):
-        # Workaround Qt replacing nbsp with normal spaces on copy
-        c = self.textCursor()
-        if not c.hasSelection():
-            return
-        md = QMimeData()
-        md.setText(self.selected_text)
-        QApplication.clipboard().setMimeData(md)
-
-    @pyqtSlot()
-    def cut(self):
-        # Workaround Qt replacing nbsp with normal spaces on copy
-        self.copy()
-        self.textCursor().removeSelectedText()
-
-    def selected_text_from_cursor(self, cursor):
-        return unicodedata.normalize('NFC', unicode(cursor.selectedText()).replace(PARAGRAPH_SEPARATOR, '\n').rstrip('\0'))
-
-    @property
-    def selected_text(self):
-        return self.selected_text_from_cursor(self.textCursor())
-
-    def selection_changed(self):
-        # Workaround Qt replacing nbsp with normal spaces on copy
-        clipboard = QApplication.clipboard()
-        if clipboard.supportsSelection() and self.textCursor().hasSelection():
-            md = QMimeData()
-            md.setText(self.selected_text)
-            clipboard.setMimeData(md, clipboard.Selection)
-
-    def event(self, ev):
-        if ev.type() == ev.ShortcutOverride and ev in (QKeySequence.Copy, QKeySequence.Cut):
-            ev.accept()
-            (self.copy if ev == QKeySequence.Copy else self.cut)()
-            return True
-        return QPlainTextEdit.event(self, ev)
-
 class TextEdit(PlainTextEdit):
 
     link_clicked = pyqtSignal(object)
@@ -139,6 +79,7 @@ class TextEdit(PlainTextEdit):
 
     def __init__(self, parent=None, expected_geometry=(100, 50)):
         PlainTextEdit.__init__(self, parent)
+        self.snippet_manager = SnippetManager(self)
         self.completion_popup = CompletionPopup(self)
         self.request_completion = self.completion_doc_name = None
         self.clear_completion_cache_timer = t = QTimer(self)
@@ -178,6 +119,7 @@ class TextEdit(PlainTextEdit):
 
     def apply_settings(self, prefs=None, dictionaries_changed=False):  # {{{
         prefs = prefs or tprefs
+        self.setAcceptDrops(prefs.get('editor_accepts_drops', True))
         self.setLineWrapMode(QPlainTextEdit.WidgetWidth if prefs['editor_line_wrap'] else QPlainTextEdit.NoWrap)
         theme = get_theme(prefs['editor_theme'])
         self.apply_theme(theme)
@@ -380,6 +322,10 @@ class TextEdit(PlainTextEdit):
                 c.setPosition(start_pos), c.setPosition(end_pos, c.KeepAnchor)
                 self.update_extra_selections()
         return count
+
+    def smart_comment(self):
+        from calibre.gui2.tweak_book.editor.comments import smart_comment
+        smart_comment(self, self.syntax)
 
     def find(self, pat, wrap=False, marked=False, complete=False, save_match=None):
         if marked:
@@ -592,19 +538,18 @@ class TextEdit(PlainTextEdit):
             self.show_tooltip(ev)
             return True
         if ev.type() == ev.ShortcutOverride:
-            if ev in (
-                # Let the global cut/copy/paste/undo/redo shortcuts work,this avoids the nbsp
-                # problem as well, since they use the overridden copy() method
-                # instead of the one from Qt, and allows proper customization
-                # of the shortcuts
-                QKeySequence.Copy, QKeySequence.Cut, QKeySequence.Paste, QKeySequence.Undo, QKeySequence.Redo
-            ) or (
-                # This is used to convert typed hex codes into unicode
-                # characters
-                ev.key() == Qt.Key_X and ev.modifiers() == Qt.AltModifier
-            ):
+            # Let the global cut/copy/paste/undo/redo shortcuts work, this avoids the nbsp
+            # problem as well, since they use the overridden copy() method
+            # instead of the one from Qt, and allows proper customization
+            # of the shortcuts
+            if ev in (QKeySequence.Copy, QKeySequence.Cut, QKeySequence.Paste, QKeySequence.Undo, QKeySequence.Redo):
                 ev.ignore()
-                return False
+                return True
+            # This is used to convert typed hex codes into unicode
+            # characters
+            if ev.key() == Qt.Key_X and ev.modifiers() == Qt.AltModifier:
+                ev.accept()
+                return True
         return QPlainTextEdit.event(self, ev)
 
     def text_for_range(self, block, r):
@@ -618,7 +563,7 @@ class TextEdit(PlainTextEdit):
             formats = self.highlighter.parse_single_block(c.block())[0]
         pos = c.positionInBlock()
         for r in formats:
-            if r.start <= pos < r.start + r.length and r.format.property(SPELL_PROPERTY):
+            if r.start <= pos <= r.start + r.length and r.format.property(SPELL_PROPERTY):
                 return r.format.property(SPELL_LOCALE_PROPERTY)
 
     def recheck_word(self, word, locale):
@@ -638,7 +583,7 @@ class TextEdit(PlainTextEdit):
             return
         pos = cursor.positionInBlock()
         for r in cursor.block().layout().additionalFormats():
-            if r.start <= pos < r.start + r.length and r.format.property(SYNTAX_PROPERTY):
+            if r.start <= pos <= r.start + r.length and r.format.property(SYNTAX_PROPERTY):
                 return r
 
     def syntax_format_for_cursor(self, cursor):
@@ -737,7 +682,7 @@ class TextEdit(PlainTextEdit):
             c.setPosition(c.position() - len(suffix))
         self.setTextCursor(c)
 
-    def insert_image(self, href):
+    def insert_image(self, href, fullpage=False, preserve_aspect_ratio=False):
         c = self.textCursor()
         template, alt = 'url(%s)', ''
         left = min(c.position(), c.anchor)
@@ -745,12 +690,20 @@ class TextEdit(PlainTextEdit):
             left, right = self.get_range_inside_tag()
             c.setPosition(left)
             c.setPosition(right, c.KeepAnchor)
-            alt = _('Image')
-            template = '<img alt="{0}" src="%s" />'.format(alt)
             href = prepare_string_for_xml(href, True)
+            if fullpage:
+                template =  '''\
+<div style="page-break-before:always; page-break-after:always; page-break-inside:avoid">\
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" \
+version="1.1" width="100%%" height="100%%" viewBox="0 0 1200 1600" preserveAspectRatio="{}">\
+<image width="1200" height="1600" xlink:href="%s"/>\
+</svg></div>'''.format('xMidYMid meet' if preserve_aspect_ratio else 'none')
+            else:
+                alt = _('Image')
+                template = '<img alt="{0}" src="%s" />'.format(alt)
         text = template % href
         c.insertText(text)
-        if self.syntax == 'html':
+        if self.syntax == 'html' and not fullpage:
             c.setPosition(left + 10)
             c.setPosition(c.position() + len(alt), c.KeepAnchor)
         else:
@@ -775,10 +728,8 @@ class TextEdit(PlainTextEdit):
             self.setOverwriteMode(self.overwriteMode() ^ True)
             ev.accept()
             return
-        if isosx and QT_VERSION < 0x504000 and ev.modifiers() == Qt.ControlModifier and re.search(r'[a-zA-Z0-9]+', ev.text()) is not None:
-            # For some reason Qt 5 translates Cmd+key into text on OS X
-            # https://bugreports.qt-project.org/browse/QTBUG-36281
-            ev.setAccepted(False)
+        if self.snippet_manager.handle_key_press(ev):
+            self.completion_popup.hide()
             return
         if self.smarts.handle_key_press(ev, self):
             self.handle_keypress_completion(ev)

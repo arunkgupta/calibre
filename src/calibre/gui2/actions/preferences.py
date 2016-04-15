@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -62,9 +62,11 @@ class PreferencesAction(InterfaceAction):
             return
         d = Preferences(self.gui, initial_plugin=initial_plugin,
                 close_after_initial=close_after_initial)
-        d.show()
         d.run_wizard_requested.connect(self.gui.run_wizard,
                 type=Qt.QueuedConnection)
+        d.exec_()
+        if d.do_restart:
+            self.gui.quit(restart=True)
 
     def debug_restart(self, *args):
         self.gui.quit(restart=True, debug_on_restart=True)

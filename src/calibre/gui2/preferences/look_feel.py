@@ -1,22 +1,29 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
 __copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
+import json
+
+from collections import defaultdict
 from threading import Thread
 from functools import partial
 
 from PyQt5.Qt import (
     QApplication, QFont, QFontInfo, QFontDialog, QColorDialog, QPainter,
-    QAbstractListModel, Qt, QIcon, QKeySequence, QColor, pyqtSignal,
-    QWidget, QSizePolicy, QBrush, QPixmap, QSize, QPushButton, QVBoxLayout)
+    QAbstractListModel, Qt, QIcon, QKeySequence, QColor, pyqtSignal, QCursor,
+    QWidget, QSizePolicy, QBrush, QPixmap, QSize, QPushButton, QVBoxLayout,
+    QTableWidget, QTableWidgetItem, QLabel, QFormLayout, QLineEdit
+)
 
 from calibre import human_readable
+from calibre.ebooks.metadata.sources.prefs import msprefs
+from calibre.gui2.dialogs.template_dialog import TemplateDialog
 from calibre.gui2.preferences import ConfigWidgetBase, test_widget, CommaSeparatedList
 from calibre.gui2.preferences.look_feel_ui import Ui_Form
-from calibre.gui2 import config, gprefs, qt_app, open_local_file, question_dialog
+from calibre.gui2 import config, gprefs, qt_app, open_local_file, question_dialog, error_dialog
 from calibre.utils.localization import (available_translations,
     get_language, get_lang)
 from calibre.utils.config import prefs
@@ -24,6 +31,124 @@ from calibre.utils.icu import sort_key
 from calibre.gui2.book_details import get_field_list
 from calibre.gui2.preferences.coloring import EditRules
 from calibre.gui2.library.alternate_views import auto_height, CM_TO_INCH
+from calibre.gui2.widgets2 import Dialog
+
+class BusyCursor(object):
+
+    def __enter__(self):
+        QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
+
+    def __exit__(self, *args):
+        QApplication.restoreOverrideCursor()
+
+# IdLinksEditor {{{
+
+class IdLinksRuleEdit(Dialog):
+
+    def __init__(self, key='', name='', template='', parent=None):
+        title = _('Edit rule') if key else _('Create a new rule')
+        Dialog.__init__(self, title=title, name='id-links-rule-editor', parent=parent)
+        self.key.setText(key), self.nw.setText(name), self.template.setText(template or 'http://example.com/{id}')
+
+    @property
+    def rule(self):
+        return self.key.text().lower(), self.nw.text(), self.template.text()
+
+    def setup_ui(self):
+        self.l = l = QFormLayout(self)
+        l.setFieldGrowthPolicy(l.AllNonFixedFieldsGrow)
+        l.addRow(QLabel(_(
+            'The key of the identifier, for example, in isbn:XXX, the key is isbn')))
+        self.key = k = QLineEdit(self)
+        l.addRow(_('&Key:'), k)
+        l.addRow(QLabel(_(
+            'The name that will appear in the book details panel')))
+        self.nw = n = QLineEdit(self)
+        l.addRow(_('&Name:'), n)
+        la = QLabel(_(
+            'The template used to create the link. The placeholder {id} in the template will be replaced with the actual identifier value.'))
+        la.setWordWrap(True)
+        l.addRow(la)
+        self.template = t = QLineEdit(self)
+        l.addRow(_('&Template:'), t)
+        t.selectAll()
+        t.setFocus(Qt.OtherFocusReason)
+        l.addWidget(self.bb)
+
+    def accept(self):
+        r = self.rule
+        for i, which in enumerate([_('Key'), _('Name'), _('Template')]):
+            if not r[i]:
+                return error_dialog(self, _('Value needed'), _(
+                    'The %s field cannot be empty') % which, show=True)
+        Dialog.accept(self)
+
+class IdLinksEditor(Dialog):
+
+    def __init__(self, parent=None):
+        Dialog.__init__(self, title=_('Create rules for identifiers'), name='id-links-rules-editor', parent=parent)
+
+    def setup_ui(self):
+        self.l = l = QVBoxLayout(self)
+        self.la = la = QLabel(_(
+            'Create rules to convert identifiers into links.'))
+        la.setWordWrap(True)
+        l.addWidget(la)
+        items = []
+        for k, lx in msprefs['id_link_rules'].iteritems():
+            for n, t in lx:
+                items.append((k, n, t))
+        items.sort(key=lambda x:sort_key(x[1]))
+        self.table = t = QTableWidget(len(items), 3, self)
+        t.setHorizontalHeaderLabels([_('Key'), _('Name'), _('Template')])
+        for r, (key, val, template) in enumerate(items):
+            t.setItem(r, 0, QTableWidgetItem(key))
+            t.setItem(r, 1, QTableWidgetItem(val))
+            t.setItem(r, 2, QTableWidgetItem(template))
+        l.addWidget(t)
+        t.horizontalHeader().setSectionResizeMode(2, t.horizontalHeader().Stretch)
+        self.cb = b = QPushButton(QIcon(I('plus.png')), _('&Add rule'), self)
+        b.clicked.connect(lambda : self.edit_rule())
+        self.bb.addButton(b, self.bb.ActionRole)
+        self.rb = b = QPushButton(QIcon(I('minus.png')), _('&Remove rule'), self)
+        b.clicked.connect(lambda : self.remove_rule())
+        self.bb.addButton(b, self.bb.ActionRole)
+        self.eb = b = QPushButton(QIcon(I('modified.png')), _('&Edit rule'), self)
+        b.clicked.connect(lambda : self.edit_rule(self.table.currentRow()))
+        self.bb.addButton(b, self.bb.ActionRole)
+        l.addWidget(self.bb)
+
+    def sizeHint(self):
+        return QSize(700, 550)
+
+    def accept(self):
+        rules = defaultdict(list)
+        for r in range(self.table.rowCount()):
+            def item(c):
+                return self.table.item(r, c).text()
+            rules[item(0)].append([item(1), item(2)])
+        msprefs['id_link_rules'] = dict(rules)
+        Dialog.accept(self)
+
+    def edit_rule(self, r=-1):
+        key = name = template = ''
+        if r > -1:
+            key, name, template = map(lambda c: self.table.item(r, c).text(), range(3))
+        d = IdLinksRuleEdit(key, name, template, self)
+        if d.exec_() == d.Accepted:
+            if r < 0:
+                self.table.setRowCount(self.table.rowCount() + 1)
+                r = self.table.rowCount() - 1
+            rule = d.rule
+            for c in range(3):
+                self.table.setItem(r, c, QTableWidgetItem(rule[c]))
+            self.table.scrollToItem(self.table.item(r, 0))
+
+    def remove_rule(self):
+        r = self.table.currentRow()
+        if r > -1:
+            self.table.removeRow(r)
+# }}}
 
 class DisplayedFields(QAbstractListModel):  # {{{
 
@@ -83,7 +208,7 @@ class DisplayedFields(QAbstractListModel):  # {{{
 
     def commit(self):
         if self.changed:
-            self.db.prefs['book_display_fields'] = self.fields
+            self.db.new_api.set_pref('book_display_fields', self.fields)
 
     def move(self, idx, delta):
         row = idx.row() + delta
@@ -136,11 +261,19 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
 
         r = self.register
 
+        try:
+            self.icon_theme_title = json.loads(I('icon-theme.json', data=True))['name']
+        except Exception:
+            self.icon_theme_title = _('Default icons')
+        self.icon_theme.setText(_('Icon theme: <b>%s</b>') % self.icon_theme_title)
+        self.commit_icon_theme = None
+        self.icon_theme_button.clicked.connect(self.choose_icon_theme)
         r('gui_layout', config, restart_required=True, choices=[(_('Wide'), 'wide'), (_('Narrow'), 'narrow')])
         r('ui_style', gprefs, restart_required=True, choices=[(_('System default'), 'system'), (_('Calibre style'),
                     'calibre')])
         r('book_list_tooltips', gprefs)
         r('tag_browser_old_look', gprefs, restart_required=True)
+        r('tag_browser_hide_empty_categories', gprefs)
         r('bd_show_cover', gprefs)
         r('bd_overlay_cover_size', gprefs)
         r('cover_grid_width', gprefs)
@@ -153,10 +286,13 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         r('cover_flow_queue_length', config, restart_required=True)
         r('cover_browser_reflections', gprefs)
         r('show_rating_in_cover_browser', gprefs)
+        r('cover_browser_title_template', db.prefs)
         r('emblem_size', gprefs)
         r('emblem_position', gprefs, choices=[
             (_('Left'), 'left'), (_('Top'), 'top'), (_('Right'), 'right'), (_('Bottom'), 'bottom')])
         r('book_list_extra_row_spacing', gprefs)
+        self.cover_browser_title_template_button.clicked.connect(self.edit_cb_title_template)
+        self.id_links_button.clicked.connect(self.edit_id_link_rules)
 
         def get_esc_lang(l):
             if l == 'en':
@@ -207,8 +343,7 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         choices = set([k for k in db.field_metadata.all_field_keys()
                 if (db.field_metadata[k]['is_category'] and
                    (db.field_metadata[k]['datatype'] in ['text', 'series', 'enumeration']) and
-                    not db.field_metadata[k]['display'].get('is_names', False))
-                  or
+                    not db.field_metadata[k]['display'].get('is_names', False)) or
                    (db.field_metadata[k]['datatype'] in ['composite'] and
                     db.field_metadata[k]['display'].get('make_category', False))])
         choices -= set(['authors', 'publisher', 'formats', 'news', 'identifiers'])
@@ -281,6 +416,19 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         self.opt_cover_grid_width.valueChanged.connect(self.update_aspect_ratio)
         self.opt_cover_grid_height.valueChanged.connect(self.update_aspect_ratio)
 
+    def choose_icon_theme(self):
+        from calibre.gui2.icon_theme import ChooseTheme
+        d = ChooseTheme(self)
+        if d.exec_() == d.Accepted:
+            self.commit_icon_theme = d.commit_changes
+            self.icon_theme_title = d.new_theme_title or _('Default icons')
+            self.icon_theme.setText(_('Icon theme: <b>%s</b>') % self.icon_theme_title)
+            self.changed_signal.emit()
+
+    def edit_id_link_rules(self):
+        if IdLinksEditor(self).exec_() == Dialog.Accepted:
+            self.changed_signal.emit()
+
     @property
     def current_cover_size(self):
         cval = self.opt_cover_grid_height.value()
@@ -309,6 +457,12 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
     def cg_reset_size(self):
         self.opt_cover_grid_width.setValue(0)
         self.opt_cover_grid_height.setValue(0)
+
+    def edit_cb_title_template(self):
+        t = TemplateDialog(self, self.opt_cover_browser_title_template.text(), fm=self.gui.current_db.field_metadata)
+        t.setWindowTitle(_('Edit template for caption'))
+        if t.exec_():
+            self.opt_cover_browser_title_template.setText(t.rule[1])
 
     def initialize(self):
         ConfigWidgetBase.initialize(self)
@@ -448,20 +602,24 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
             self.changed_signal.emit()
 
     def commit(self, *args):
-        rr = ConfigWidgetBase.commit(self, *args)
-        if self.current_font != self.initial_font:
-            gprefs['font'] = (self.current_font[:4] if self.current_font else
-                    None)
-            gprefs['font_stretch'] = (self.current_font[4] if self.current_font
-                    is not None else QFont.Unstretched)
-            QApplication.setFont(self.font_display.font())
-            rr = True
-        self.display_model.commit()
-        self.edit_rules.commit(self.gui.current_db.prefs)
-        self.icon_rules.commit(self.gui.current_db.prefs)
-        self.grid_rules.commit(self.gui.current_db.prefs)
-        gprefs['cover_grid_color'] = tuple(self.cg_bg_widget.bcol.getRgb())[:3]
-        gprefs['cover_grid_texture'] = self.cg_bg_widget.btex
+        with BusyCursor():
+            rr = ConfigWidgetBase.commit(self, *args)
+            if self.current_font != self.initial_font:
+                gprefs['font'] = (self.current_font[:4] if self.current_font else
+                        None)
+                gprefs['font_stretch'] = (self.current_font[4] if self.current_font
+                        is not None else QFont.Unstretched)
+                QApplication.setFont(self.font_display.font())
+                rr = True
+            self.display_model.commit()
+            self.edit_rules.commit(self.gui.current_db.prefs)
+            self.icon_rules.commit(self.gui.current_db.prefs)
+            self.grid_rules.commit(self.gui.current_db.prefs)
+            gprefs['cover_grid_color'] = tuple(self.cg_bg_widget.bcol.getRgb())[:3]
+            gprefs['cover_grid_texture'] = self.cg_bg_widget.btex
+            if self.commit_icon_theme is not None:
+                self.commit_icon_theme()
+                rr = True
         return rr
 
     def refresh_gui(self, gui):
@@ -470,9 +628,9 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         self.update_font_display()
         gui.tags_view.reread_collapse_parameters()
         gui.library_view.refresh_book_details()
-        if hasattr(gui.cover_flow, 'setShowReflections'):
-            gui.cover_flow.setShowReflections(gprefs['cover_browser_reflections'])
-            gui.cover_flow.setPreserveAspectRatio(gprefs['cb_preserve_aspect_ratio'])
+        gui.cover_flow.setShowReflections(gprefs['cover_browser_reflections'])
+        gui.cover_flow.setPreserveAspectRatio(gprefs['cb_preserve_aspect_ratio'])
+        gui.cover_flow.template_inited = False
         gui.library_view.refresh_row_sizing()
         gui.grid_view.refresh_settings()
 
@@ -480,5 +638,3 @@ if __name__ == '__main__':
     from calibre.gui2 import Application
     app = Application([])
     test_widget('Interface', 'Look & Feel')
-
-

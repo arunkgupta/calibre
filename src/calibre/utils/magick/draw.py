@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -117,6 +117,10 @@ def thumbnail(data, width=120, height=120, bgcolor='#ffffff', fmt='jpg',
     img = Image()
     img.load(data)
     owidth, oheight = img.size
+    if width is None:
+        width = owidth
+    if height is None:
+        height = oheight
     if not preserve_aspect_ratio:
         scaled = owidth > width or oheight > height
         nwidth = width
@@ -141,10 +145,7 @@ def identify_data(data):
         # ImageMagick segfaults when trying to identify SVG images
         raise ValueError('Identifying svg images is not supported')
     img = Image()
-    if hasattr(img, 'identify'):
-        img.identify(data)
-    else:
-        img.load(data)
+    img.identify(data)
     width, height = img.size
     fmt = img.format
     return (width, height, fmt)

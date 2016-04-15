@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 __copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
 __docformat__ = 'restructuredtext en'
 __license__   = 'GPL v3'
@@ -205,7 +205,7 @@ class CheckLibraryDialog(QDialog):
             _('Enter comma-separated standard file name wildcards, such as synctoy*.dat'))
         ln.setBuddy(self.name_ignores)
         h.addWidget(self.name_ignores)
-        le = QLabel(_('Extensions to ignore'))
+        le = QLabel(_('Extensions to ignore:'))
         h.addWidget(le)
         self.ext_ignores = QLineEdit()
         self.ext_ignores.setText(db.prefs.get('check_library_ignore_extensions', ''))
@@ -230,10 +230,8 @@ class CheckLibraryDialog(QDialog):
         return True
 
     def accept(self):
-        self.db.prefs['check_library_ignore_extensions'] = \
-                                            unicode(self.ext_ignores.text())
-        self.db.prefs['check_library_ignore_names'] = \
-                                            unicode(self.name_ignores.text())
+        self.db.new_api.set_pref('check_library_ignore_extensions', unicode(self.ext_ignores.text()))
+        self.db.new_api.set_pref('check_library_ignore_names', unicode(self.name_ignores.text()))
         QDialog.accept(self)
 
     def box_to_list(self, txt):

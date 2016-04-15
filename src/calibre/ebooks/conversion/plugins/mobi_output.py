@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement
 
@@ -73,10 +73,10 @@ class MOBIOutput(OutputFormatPlugin):
             help=_('When adding the Table of Contents to the book, add it at the start of the '
                 'book instead of the end. Not recommended.')
         ),
-        OptionRecommendation(name='extract_to', recommended_value=None,
-            help=_('Extract the contents of the MOBI file to the'
-                ' specified directory. If the directory already '
-                'exists, it will be deleted.')
+        OptionRecommendation(name='extract_to',
+            help=_('Extract the contents of the generated %s file to the '
+                'specified directory. The contents of the directory are first '
+                'deleted, so be careful.') % 'MOBI'
         ),
         OptionRecommendation(name='share_not_sync', recommended_value=False,
             help=_('Enable sharing of book content via Facebook etc. '
@@ -191,6 +191,8 @@ class MOBIOutput(OutputFormatPlugin):
         self.check_for_periodical()
 
         if create_kf8:
+            from calibre.ebooks.mobi.writer8.cleanup import remove_duplicate_anchors
+            remove_duplicate_anchors(self.oeb)
             # Split on pagebreaks so that the resulting KF8 is faster to load
             from calibre.ebooks.oeb.transforms.split import Split
             Split()(self.oeb, self.opts)
@@ -286,11 +288,10 @@ class AZW3Output(OutputFormatPlugin):
             help=_('When adding the Table of Contents to the book, add it at the start of the '
                 'book instead of the end. Not recommended.')
         ),
-        OptionRecommendation(name='extract_to', recommended_value=None,
-            help=_('Extract the contents of the MOBI file to the'
-                ' specified directory. If the directory already '
-                'exists, it will be deleted.')
-        ),
+        OptionRecommendation(name='extract_to',
+            help=_('Extract the contents of the generated %s file to the '
+                'specified directory. The contents of the directory are first '
+                'deleted, so be careful.') % 'AZW3'),
         OptionRecommendation(name='share_not_sync', recommended_value=False,
             help=_('Enable sharing of book content via Facebook etc. '
                 ' on the Kindle. WARNING: Using this feature means that '
@@ -302,10 +303,12 @@ class AZW3Output(OutputFormatPlugin):
     def convert(self, oeb, output_path, input_plugin, opts, log):
         from calibre.ebooks.mobi.writer2.resources import Resources
         from calibre.ebooks.mobi.writer8.main import create_kf8_book
+        from calibre.ebooks.mobi.writer8.cleanup import remove_duplicate_anchors
 
         self.oeb, self.opts, self.log = oeb, opts, log
         opts.mobi_periodical = self.is_periodical
         passthrough = getattr(opts, 'mobi_passthrough', False)
+        remove_duplicate_anchors(oeb)
 
         resources = Resources(self.oeb, self.opts, self.is_periodical,
                 add_fonts=True, process_images=False)

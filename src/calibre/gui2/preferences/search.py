@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -96,7 +96,7 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         self.gst_changed = False
 
         if db.prefs.get('grouped_search_make_user_categories', None) is None:
-            db.prefs.set('grouped_search_make_user_categories', [])
+            db.new_api.set_pref('grouped_search_make_user_categories', [])
         r('grouped_search_make_user_categories', db.prefs, setting=CommaSeparatedList)
         self.muc_changed = False
         self.opt_grouped_search_make_user_categories.lineEdit().editingFinished.connect(
@@ -212,15 +212,15 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
 
     def commit(self):
         if self.gst_changed:
-            self.db.prefs.set('grouped_search_terms', self.gst)
+            self.db.new_api.set_pref('grouped_search_terms', self.gst)
             self.db.field_metadata.add_grouped_search_terms(self.gst)
-        self.db.prefs.set('similar_authors_search_key',
+        self.db.new_api.set_pref('similar_authors_search_key',
                           unicode(self.similar_authors_search_key.currentText()))
-        self.db.prefs.set('similar_tags_search_key',
+        self.db.new_api.set_pref('similar_tags_search_key',
                           unicode(self.similar_tags_search_key.currentText()))
-        self.db.prefs.set('similar_series_search_key',
+        self.db.new_api.set_pref('similar_series_search_key',
                           unicode(self.similar_series_search_key.currentText()))
-        self.db.prefs.set('similar_publisher_search_key',
+        self.db.new_api.set_pref('similar_publisher_search_key',
                           unicode(self.similar_publisher_search_key.currentText()))
         return ConfigWidgetBase.commit(self)
 

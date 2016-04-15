@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 __copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
 __docformat__ = 'restructuredtext en'
 __license__   = 'GPL v3'
@@ -274,6 +274,7 @@ class TemplateDialog(QDialog, Ui_TemplateDialog):
             self.mi.rating = 4.0
             self.mi.tags = [_('Tag 1'), _('Tag 2')]
             self.mi.languages = ['eng']
+            self.mi.id = 1
             if fm is not None:
                 self.mi.set_all_user_metadata(fm.custom_field_metadata())
             else:

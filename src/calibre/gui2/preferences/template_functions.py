@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -223,7 +223,7 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         for name, cls in self.funcs.iteritems():
             if name not in self.builtins:
                 pref_value.append((cls.name, cls.doc, cls.arg_count, cls.program_text))
-        self.db.prefs.set('user_template_functions', pref_value)
+        self.db.new_api.set_pref('user_template_functions', pref_value)
         load_user_template_functions(self.db.library_id, pref_value)
         return False
 

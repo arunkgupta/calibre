@@ -22,11 +22,11 @@ from calibre.web import Recipe
 from calibre.ebooks.metadata.toc import TOC
 from calibre.ebooks.metadata import MetaInformation
 from calibre.web.feeds import feed_from_xml, templates, feeds_from_index, Feed
-from calibre.web.fetch.simple import option_parser as web2disk_option_parser
-from calibre.web.fetch.simple import RecursiveFetcher
+from calibre.web.fetch.simple import option_parser as web2disk_option_parser, RecursiveFetcher, AbortArticle
 from calibre.utils.threadpool import WorkRequest, ThreadPool, NoResultsPending
 from calibre.ptempfile import PersistentTemporaryFile
 from calibre.utils.date import now as nowf
+from calibre.utils.icu import numeric_sort_key
 from calibre.utils.magick.draw import save_cover_data_to, add_borders_to_image
 from calibre.utils.localization import canonicalize_lang
 from calibre.utils.logging import ThreadSafeWrapper
@@ -383,7 +383,13 @@ class BasicNewsRecipe(Recipe):
     #: assigned (default None).
     scale_news_images = None
 
-    # See the built-in profiles for examples of these settings.
+    #: If set to True then links in downloaded articles that point to other downloaded articles are
+    #: changed to point to the downloaded copy of the article rather than its original web URL. If you
+    #: set this to True, you might also need to implement :meth:`canonicalize_internal_url` to work
+    #: with the URL scheme of your particular website.
+    resolve_internal_links = False
+
+    # See the built-in recipes for examples of these settings.
 
     def short_title(self):
         return self.title
@@ -481,7 +487,7 @@ class BasicNewsRecipe(Recipe):
             if getattr(self, 'browser', None) is not None:
                 return self.clone_browser(self.browser)
             from calibre.web.jsbrowser.browser import Browser
-            br = Browser()
+            br = Browser(headless=not self.test)
             with br:
                 self.javascript_login(br, self.username, self.password)
                 kwargs['user_agent'] = br.user_agent
@@ -584,6 +590,12 @@ class BasicNewsRecipe(Recipe):
         '''
         return None
 
+    def abort_article(self, msg=None):
+        ''' Call this method inside any of the preprocess methods to abort the
+        download for the current article. Useful to skip articles that contain
+        inappropriate content, such as pure video articles. '''
+        raise AbortArticle(msg or _('Article download aborted'))
+
     def preprocess_raw_html(self, raw_html, url):
         '''
         This method is called with the source of each downloaded :term:`HTML` file, before
@@ -639,6 +651,25 @@ class BasicNewsRecipe(Recipe):
         logging out of subscription sites, etc.
         '''
         pass
+
+    def canonicalize_internal_url(self, url, is_link=True):
+        '''
+        Return a set of canonical representations of ``url``.  The default
+        implementation uses just the server hostname and path of the URL,
+        ignoring any query parameters, fragments, etc. The canonical
+        representations must be unique across all URLs for this news source. If
+        they are not, then internal links may be resolved incorrectly.
+
+        :param is_link: Is True if the URL is coming from an internal link in
+                        an HTML file. False if the URL is the URL used to
+                        download an article.
+        '''
+        try:
+            parts = urlparse.urlparse(url)
+        except Exception:
+            self.log.error('Failed to parse url: %r, ignoring' % url)
+            return frozenset()
+        return frozenset([(parts.netloc, (parts.path or '').rstrip('/'))])
 
     def index_to_soup(self, url_or_raw, raw=False, as_tree=False):
         '''
@@ -1474,6 +1505,8 @@ class BasicNewsRecipe(Recipe):
         self.play_order_counter = 0
         self.play_order_map = {}
 
+        self.article_url_map = aumap = defaultdict(set)
+
         def feed_index(num, parent):
             f = feeds[num]
             for j, a in enumerate(f):
@@ -1493,7 +1526,10 @@ class BasicNewsRecipe(Recipe):
                     if po is None:
                         self.play_order_counter += 1
                         po = self.play_order_counter
-                    parent.add_item('%sindex.html'%adir, None,
+                    arelpath = '%sindex.html'%adir
+                    for curl in self.canonicalize_internal_url(a.orig_url, is_link=False):
+                        aumap[curl].add(arelpath)
+                    parent.add_item(arelpath, None,
                             a.title if a.title else _('Untitled Article'),
                             play_order=po, author=auth,
                             description=desc, toc_thumbnail=tt)
@@ -1572,13 +1608,19 @@ class BasicNewsRecipe(Recipe):
 
     def error_in_article_download(self, request, traceback):
         self.jobs_done += 1
-        self.log.error('Failed to download article:', request.article.title,
-        'from', request.article.url)
-        self.log.debug(traceback)
-        self.log.debug('\n')
-        self.report_progress(float(self.jobs_done)/len(self.jobs),
-                _('Article download failed: %s')%force_unicode(request.article.title))
-        self.failed_downloads.append((request.feed, request.article, traceback))
+        if traceback and re.search('^AbortArticle:', traceback, flags=re.M) is not None:
+            self.log.warn('Aborted download of article:', request.article.title,
+                          'from', request.article.url)
+            self.report_progress(float(self.jobs_done)/len(self.jobs),
+                _('Article download aborted: %s')%force_unicode(request.article.title))
+        else:
+            self.log.error('Failed to download article:', request.article.title,
+            'from', request.article.url)
+            self.log.debug(traceback)
+            self.log.debug('\n')
+            self.report_progress(float(self.jobs_done)/len(self.jobs),
+                    _('Article download failed: %s')%force_unicode(request.article.title))
+            self.failed_downloads.append((request.feed, request.article, traceback))
 
     def parse_feeds(self):
         '''
@@ -1691,6 +1733,22 @@ class BasicNewsRecipe(Recipe):
             divtag.append(brtag)
         return soup
 
+    def internal_postprocess_book(self, oeb, opts, log):
+        if self.resolve_internal_links and self.article_url_map:
+            seen = set()
+            for item in oeb.spine:
+                for a in item.data.xpath('//*[local-name()="a" and @href]'):
+                    if a.get('rel') == 'calibre-downloaded-from':
+                        continue
+                    url = a.get('href')
+                    for curl in self.canonicalize_internal_url(url):
+                        articles = self.article_url_map.get(curl)
+                        if articles:
+                            arelpath = sorted(articles, key=numeric_sort_key)[0]
+                            a.set('href', item.relhref(arelpath))
+                            if url not in seen:
+                                log.debug('Resolved internal URL: %s -> %s' % (url, arelpath))
+                                seen.add(url)
 
 class CustomIndexRecipe(BasicNewsRecipe):
 

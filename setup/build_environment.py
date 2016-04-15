@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement
 
@@ -26,7 +26,6 @@ if iswindows:
         if 'SDK' in p:
             MT = os.path.join(os.path.dirname(p), 'bin', 'mt.exe')
     MT = os.path.join(SDK, 'Bin', 'mt.exe')
-    os.environ['QMAKESPEC'] = 'win32-msvc2008'
 
 QMAKE = 'qmake'
 for x in ('qmake-qt5', 'qt5-qmake', 'qmake'):
@@ -38,6 +37,8 @@ QMAKE = os.environ.get('QMAKE', QMAKE)
 
 PKGCONFIG = find_executable('pkg-config')
 PKGCONFIG = os.environ.get('PKG_CONFIG', PKGCONFIG)
+if islinux and not PKGCONFIG:
+    raise SystemExit('Failed to find pkg-config on your system. You can use the environment variable PKG_CONFIG to point to the pkg-config executable')
 
 if iswindows:
     import win32api
@@ -83,13 +84,14 @@ def consolidate(envvar, default):
 
 qraw = subprocess.check_output([QMAKE, '-query']).decode('utf-8')
 def readvar(name):
-    return re.search('%s:(.+)$' % name, qraw, flags=re.M).group(1).strip()
+    return re.search('^%s:(.+)$' % name, qraw, flags=re.M).group(1).strip()
 
 
 pyqt = {x:readvar(y) for x, y in (
     ('inc', 'QT_INSTALL_HEADERS'), ('lib', 'QT_INSTALL_LIBS')
 )}
 qt = {x:readvar(y) for x, y in {'libs':'QT_INSTALL_LIBS', 'plugins':'QT_INSTALL_PLUGINS'}.iteritems()}
+qmakespec = readvar('QMAKE_SPEC') if iswindows else None
 
 pyqt['sip_bin'] = os.environ.get('SIP_BIN', 'sip')
 
@@ -122,6 +124,7 @@ icu_lib_dirs = []
 zlib_inc_dirs = []
 zlib_lib_dirs = []
 zlib_libs = ['z']
+openssl_inc_dirs, openssl_lib_dirs = [], []
 ICU = sw = ''
 
 QT_DLLS = ['Qt5' + x for x in (
@@ -149,6 +152,9 @@ if iswindows:
     icu_inc_dirs = [os.path.join(ICU, 'source', 'common'), os.path.join(ICU,
         'source', 'i18n')]
     icu_lib_dirs = [os.path.join(ICU, 'source', 'lib')]
+    SSL = os.environ.get('OPENSSL_DIR', os.path.join(prefix, 'private', 'openssl'))
+    openssl_inc_dirs = [os.path.join(SSL, 'include')]
+    openssl_lib_dirs = [os.path.join(SSL, 'lib')]
     sqlite_inc_dirs = [sw_inc_dir]
     chmlib_inc_dirs = consolidate('CHMLIB_INC_DIR', os.path.join(prefix,
         'build', 'chmlib-0.40', 'src'))
@@ -167,12 +173,16 @@ if iswindows:
     zlib_libs = ['zlib']
 
     md = glob.glob(os.path.join(prefix, 'build', 'ImageMagick-*'))[-1]
-    magick_inc_dirs = [md]
-    magick_lib_dirs = [os.path.join(magick_inc_dirs[0], 'VisualMagick', 'lib')]
+    if os.path.exists(os.path.join(md, 'ImageMagick/wand/MagickWand.h')):
+        magick_inc_dirs = [os.path.join(md, 'ImageMagick')]
+    else:
+        magick_inc_dirs = [md]
+    magick_lib_dirs = [os.path.join(md, 'VisualMagick', 'lib')]
     magick_libs = ['CORE_RL_wand_', 'CORE_RL_magick_']
     podofo_inc = os.path.join(sw_inc_dir, 'podofo')
     podofo_lib = sw_lib_dir
 elif isosx:
+    QT_DLLS += ['Qt5DBus']
     QT_FRAMEWORKS = [x.replace('5', '') for x in QT_DLLS]
     sw = os.environ.get('SW', os.path.expanduser('~/sw'))
     podofo_inc = os.path.join(sw, 'include', 'podofo')
@@ -187,8 +197,11 @@ elif isosx:
     ft_inc_dirs = [sw + '/include/freetype2']
     icu_inc_dirs = [sw + '/include']
     icu_lib_dirs = [sw + '/lib']
+    SSL = os.environ.get('OPENSSL_DIR', os.path.join(sw, 'private', 'ssl'))
+    openssl_inc_dirs = [os.path.join(SSL, 'include')]
+    openssl_lib_dirs = [os.path.join(SSL, 'lib')]
 else:
-    QT_DLLS += ['Qt5DBus']
+    QT_DLLS += ['Qt5DBus', 'Qt5XcbQpa']
     # PYQT_MODULES += ('QtDBus',)
     # Include directories
     png_inc_dirs = pkgconfig_include_dirs('libpng', 'PNG_INC_DIR',

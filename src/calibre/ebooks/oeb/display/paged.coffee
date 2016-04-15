@@ -32,6 +32,19 @@ has_start_text = (elem) ->
             return true
     return false
 
+create_page_div = (elem) ->
+    div = document.createElement('blank-page-div')
+    div.innerText = ' \n    '
+    document.body.appendChild(div)
+    div.style.setProperty('-webkit-column-break-before', 'always')
+    div.style.setProperty('display', 'block')
+    div.style.setProperty('white-space', 'pre')
+    div.style.setProperty('background-color', 'transparent')
+    div.style.setProperty('background-image', 'none')
+    div.style.setProperty('border-width', '0')
+    div.style.setProperty('float', 'none')
+    div.style.setProperty('position', 'static')
+
 class PagedDisplay
     # This class is a namespace to expose functions via the
     # window.paged_display object. The most important functions are:
@@ -112,6 +125,7 @@ class PagedDisplay
                 if node.nodeType == node.ELEMENT_NODE and window.getComputedStyle(node).direction == "rtl"
                     node.style.setProperty("direction", "rtl")
             document.body.style.direction = "ltr"
+            document.documentElement.style.direction = 'ltr'
 
     layout: (is_single_page=false) ->
         # start_time = new Date().getTime()
@@ -124,6 +138,11 @@ class PagedDisplay
             single_screen = (document.body.scrollHeight < window.innerHeight + 75)
             this.handle_rtl_body(body_style)
             first_layout = true
+            if not single_screen and this.cols_per_screen > 1
+                num = this.cols_per_screen - 1
+                while num > 0
+                    num -= 1
+                    create_page_div()
 
         ww = window.innerWidth
 
@@ -192,12 +211,12 @@ class PagedDisplay
         bs.setProperty('overflow', 'visible')
         bs.setProperty('height', this.current_page_height + 'px')
         bs.setProperty('width', (window.innerWidth - 2*sm)+'px')
-        bs.setProperty('margin-top', this.effective_margin_top + 'px')
-        bs.setProperty('margin-bottom', this.effective_margin_bottom+'px')
-        bs.setProperty('margin-left', sm+'px')
-        bs.setProperty('margin-right', sm+'px')
+        bs.setProperty('padding-top', this.effective_margin_top + 'px')
+        bs.setProperty('padding-bottom', this.effective_margin_bottom+'px')
+        bs.setProperty('padding-left', sm+'px')
+        bs.setProperty('padding-right', sm+'px')
         for edge in ['left', 'right', 'top', 'bottom']
-            bs.setProperty('padding-'+edge, '0px')
+            bs.setProperty('margin-'+edge, '0px')
             bs.setProperty('border-'+edge+'-width', '0px')
         bs.setProperty('min-width', '0')
         bs.setProperty('max-width', 'none')
@@ -350,6 +369,9 @@ class PagedDisplay
         else
             window.scrollTo(pos, 0)
 
+    scroll_to_column: (number) ->
+        this.scroll_to_xpos(number * this.page_width + 10)
+
     column_at: (xpos) ->
         # Return the number of the column that contains xpos
         return Math.floor(xpos/this.page_width)
@@ -430,6 +452,11 @@ class PagedDisplay
             return -1
         cc = this.current_column_location()
         ans = cc + this.screen_width
+        if this.cols_per_screen > 1
+            width_left = document.body.scrollWidth - (window.pageXOffset + window.innerWidth)
+            pages_left = width_left / this.page_width
+            if Math.ceil(pages_left) < this.cols_per_screen
+                return -1  # Only blank, dummy pages left
         limit = document.body.scrollWidth - window.innerWidth
         if ans > limit
             ans = if window.pageXOffset < limit then limit else -1
@@ -527,7 +554,7 @@ class PagedDisplay
             # selection
             this.scroll_to_xpos(left+5)
 
-    jump_to_cfi: (cfi) ->
+    jump_to_cfi: (cfi, job_id=-1) ->
         # Jump to the position indicated by the specified conformal fragment
         # indicator (requires the cfi.coffee library). When in paged mode, the
         # scroll is performed so that the column containing the position
@@ -537,6 +564,8 @@ class PagedDisplay
                 this.scroll_to_xpos(x)
             else
                 window.scrollTo(0, y)
+            if window.py_bridge
+                window.py_bridge.jump_to_cfi_finished(job_id)
         )
 
     current_cfi: () ->

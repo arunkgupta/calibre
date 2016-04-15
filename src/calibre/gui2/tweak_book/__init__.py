@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -51,9 +51,12 @@ d['custom_themes'] = {}
 d['remove_unused_classes'] = False
 d['global_book_toolbar'] = [
 'new-file', 'open-book',  'save-book', None, 'global-undo', 'global-redo', 'create-checkpoint', None, 'donate', 'user-manual']
-d['global_tools_toolbar'] = ['check-book', 'spell-check-book', 'edit-toc', 'insert-character', 'manage-fonts', 'smarten-punctuation', 'remove-unused-css']
+d['global_tools_toolbar'] = [
+    'check-book', 'spell-check-book', 'edit-toc', 'insert-character',
+    'manage-fonts', 'smarten-punctuation', 'remove-unused-css', 'show-reports'
+]
 d['global_plugins_toolbar'] = []
-d['editor_common_toolbar'] = [('editor-' + x) if x else None for x in ('undo', 'redo', None, 'cut', 'copy', 'paste')]
+d['editor_common_toolbar'] = [('editor-' + x) if x else None for x in ('undo', 'redo', None, 'cut', 'copy', 'paste', 'smart-comment')]
 d['editor_css_toolbar'] = ['pretty-current', 'insert-image']
 d['editor_xml_toolbar'] = ['pretty-current', 'insert-tag']
 d['editor_html_toolbar'] = ['fix-html-current', 'pretty-current', 'insert-image', 'insert-hyperlink', 'insert-tag', 'change-paragraph']
@@ -64,6 +67,12 @@ d['editor_format_toolbar'] = [('format-text-' + x) if x else x for x in (
 d['spell_check_case_sensitive_search'] = False
 d['add_cover_preserve_aspect_ratio'] = False
 d['templates'] = {}
+d['auto_close_tags'] = True
+d['restore_book_state'] = True
+d['editor_accepts_drops'] = True
+d['toolbar_icon_size'] = 24
+d['insert_full_screen_image'] = False
+d['preserve_aspect_ratio_when_inserting_image'] = False
 del d
 
 ucase_map = {l:string.ascii_uppercase[i] for i, l in enumerate(string.ascii_lowercase)}

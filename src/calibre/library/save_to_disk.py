@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement
 
@@ -223,7 +223,7 @@ def get_components(template, mi, id, timefmt='%b %Y', length=250,
                 if key+'_index' in format_args:
                     format_args[key+'_index'] = fmt_sidx(format_args[key+'_index'])
             elif cm['datatype'] == 'datetime':
-                format_args[key] = strftime(timefmt, format_args[key].timetuple())
+                format_args[key] = strftime(timefmt, as_local_time(format_args[key]).timetuple())
             elif cm['datatype'] == 'bool':
                 format_args[key] = _('yes') if format_args[key] else _('no')
             elif cm['datatype'] == 'rating':

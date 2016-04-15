@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -82,7 +82,7 @@ class ContexttualSubstitution(UnknownLookupSubTable):
         return self.format != 3
 
     def initialize(self, data):
-        pass # TODO
+        pass  # TODO
 
     def all_substitutions(self, glyph_ids):
         # This table only defined substitution in terms of other tables
@@ -98,7 +98,7 @@ class ChainingContextualSubstitution(UnknownLookupSubTable):
         return self.format != 3
 
     def initialize(self, data):
-        pass # TODO
+        pass  # TODO
 
     def all_substitutions(self, glyph_ids):
         # This table only defined substitution in terms of other tables
@@ -117,7 +117,7 @@ class ReverseChainSingleSubstitution(UnknownLookupSubTable):
                 single_special=False)
         backtrack_offsets = [data.start_pos + x for x in backtrack_offsets]
         lookahead_offsets = [data.start_pos + x for x in lookahead_offsets]
-        backtrack_offsets, lookahead_offsets # TODO: Use these
+        backtrack_offsets, lookahead_offsets  # TODO: Use these
         count = data.unpack('H')
         self.substitutes = data.unpack('%dH'%count)
 
@@ -171,11 +171,11 @@ class GSUBTable(UnknownTable):
                 self.lookuplist_offset)
 
     def all_substitutions(self, glyph_ids):
-        ans = set()
         glyph_ids = frozenset(glyph_ids)
+        ans = set(glyph_ids)
         for lookup_table in self.lookup_list_table:
             for subtable in lookup_table:
-                gids = subtable.all_substitutions(glyph_ids)
-                ans |= gids
-        return ans
-
+                glyphs = subtable.all_substitutions(ans)
+                if glyphs:
+                    ans |= glyphs
+        return ans - {glyph_ids}

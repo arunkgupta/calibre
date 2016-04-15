@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -417,6 +417,9 @@ class LegacyTest(BaseTest):
             'books_in_old_database', 'sizeof_old_database',  # unused
             'migrate_old',  # no longer supported
             'remove_unused_series',  # superseded by clean API
+            'move_library_to',  # API changed, no code uses old API
+            # Added compiled_rules() for calibredb add
+            'find_books_in_directory', 'import_book_directory', 'import_book_directory_multiple', 'recursive_import',
 
             # Internal API
             'clean_user_categories',  'cleanup_tags',  'books_list_filter', 'conn', 'connect', 'construct_file_name',
@@ -802,4 +805,3 @@ class LegacyTest(BaseTest):
         ))
         db.close()
     # }}}
-

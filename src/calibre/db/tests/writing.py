@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -192,11 +192,12 @@ class WritingTest(BaseTest):
         for c in (cache, cache2):
             for i, val in {1:'A Series One', 2:'A Series One', 3:'Series'}.iteritems():
                 self.assertEqual(c.field_for('series', i), val)
+            cs_indices = {1:c.field_for('#series_index', 1), 3:c.field_for('#series_index', 3)}
             for i in (1, 2, 3):
                 self.assertEqual(c.field_for('#series', i), 'Series')
             for i, val in {1:2, 2:1, 3:3}.iteritems():
                 self.assertEqual(c.field_for('series_index', i), val)
-            for i, val in {1:1, 2:0, 3:1}.iteritems():
+            for i, val in {1:cs_indices[1], 2:0, 3:cs_indices[3]}.iteritems():
                 self.assertEqual(c.field_for('#series_index', i), val)
         del cache2
 
@@ -490,6 +491,27 @@ class WritingTest(BaseTest):
             self.assertEqual(c.all_field_names('#series'), {'My Series One'})
             for bid in c.all_book_ids():
                 self.assertIn(c.field_for('#series', bid), (None, 'My Series One'))
+
+        # Now test with restriction
+        cache = self.init_cache()
+        cache.set_field('tags', {1:'a,b,c', 2:'b,a', 3:'x,y,z'})
+        cache.set_field('series', {1:'a', 2:'a', 3:'b'})
+        cache.set_field('series_index', {1:8, 2:9, 3:3})
+        tmap, smap = cache.get_id_map('tags'), cache.get_id_map('series')
+        self.assertEqual(cache.remove_items('tags', tmap, restrict_to_book_ids=()), set())
+        self.assertEqual(cache.remove_items('tags', tmap, restrict_to_book_ids={1}), {1})
+        self.assertEqual(cache.remove_items('series', smap, restrict_to_book_ids=()), set())
+        self.assertEqual(cache.remove_items('series', smap, restrict_to_book_ids=(1,)), {1})
+        c2 = self.init_cache()
+        for c in (cache, c2):
+            self.assertEqual(c.field_for('tags', 1), ())
+            self.assertEqual(c.field_for('tags', 2), ('b', 'a'))
+            self.assertNotIn('c', set(c.get_id_map('tags').itervalues()))
+            self.assertEqual(c.field_for('series', 1), None)
+            self.assertEqual(c.field_for('series', 2), 'a')
+            self.assertEqual(c.field_for('series_index', 1), 1.0)
+            self.assertEqual(c.field_for('series_index', 2), 9)
+
     # }}}
 
     def test_rename_items(self):  # {{{
@@ -573,6 +595,19 @@ class WritingTest(BaseTest):
             for t in 'Something,Else,Entirely'.split(','):
                 self.assertIn(t, f)
             self.assertNotIn('Tag One', f)
+
+        # Test with restriction
+        cache = self.init_cache()
+        cache.set_field('tags', {1:'a,b,c', 2:'x,y,z', 3:'a,x,z'})
+        tmap = {v:k for k, v in cache.get_id_map('tags').iteritems()}
+        self.assertEqual(cache.rename_items('tags', {tmap['a']:'r'}, restrict_to_book_ids=()), (set(), {}))
+        self.assertEqual(cache.rename_items('tags', {tmap['a']:'r', tmap['b']:'q'}, restrict_to_book_ids=(1,))[0], {1})
+        self.assertEqual(cache.rename_items('tags', {tmap['x']:'X'}, restrict_to_book_ids=(2,))[0], {2})
+        c2 = self.init_cache()
+        for c in (cache, c2):
+            self.assertEqual(c.field_for('tags', 1), ('r', 'q', 'c'))
+            self.assertEqual(c.field_for('tags', 2), ('X', 'y', 'z'))
+            self.assertEqual(c.field_for('tags', 3), ('a', 'X', 'z'))
     # }}}
 
     def test_composite_cache(self):  # {{{
@@ -692,3 +727,23 @@ class WritingTest(BaseTest):
             ae(c.field_for('tags', 3), (t.id_map[lid], t.id_map[norm]))
     # }}}
 
+    def test_preferences(self):  # {{{
+        ' Test getting and setting of preferences, especially with mutable objects '
+        cache = self.init_cache()
+        changes = []
+        cache.backend.conn.setupdatehook(lambda typ, dbname, tblname, rowid: changes.append(rowid))
+        prefs = cache.backend.prefs
+        prefs['test mutable'] =  [1, 2, 3]
+        self.assertEqual(len(changes), 1)
+        a = prefs['test mutable']
+        a.append(4)
+        self.assertIn(4, prefs['test mutable'])
+        prefs['test mutable'] = a
+        self.assertEqual(len(changes), 2)
+        prefs.load_from_db()
+        self.assertIn(4, prefs['test mutable'])
+        prefs['test mutable'] = {k:k for k in range(10)}
+        self.assertEqual(len(changes), 3)
+        prefs['test mutable'] = {k:k for k in reversed(range(10))}
+        self.assertEqual(len(changes), 3, 'The database was written to despite there being no change in value')
+    # }}}

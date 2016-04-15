@@ -3,12 +3,14 @@ __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import os, shutil, traceback, functools, sys
+from collections import defaultdict
 
 from calibre.customize import (CatalogPlugin, FileTypePlugin, PluginNotFound,
                               MetadataReaderPlugin, MetadataWriterPlugin,
                               InterfaceActionBase as InterfaceAction,
                               PreferencesPlugin, platform, InvalidPlugin,
-                              StoreBase as Store, ViewerPlugin, EditBookToolPlugin)
+                              StoreBase as Store, ViewerPlugin, EditBookToolPlugin,
+                              LibraryClosedPlugin)
 from calibre.customize.conversion import InputFormatPlugin, OutputFormatPlugin
 from calibre.customize.zipplugin import loader
 from calibre.customize.profiles import InputProfile, OutputProfile
@@ -44,7 +46,7 @@ def find_plugin(name):
             return plugin
 
 
-def load_plugin(path_to_zip_file): # {{{
+def load_plugin(path_to_zip_file):  # {{{
     '''
     Load plugin from zip file or raise InvalidPlugin error
 
@@ -95,7 +97,8 @@ default_disabled_plugins = set([
 ])
 
 def is_disabled(plugin):
-    if plugin.name in config['enabled_plugins']: return False
+    if plugin.name in config['enabled_plugins']:
+        return False
     return plugin.name in config['disabled_plugins'] or \
             plugin.name in default_disabled_plugins
 # }}}
@@ -106,35 +109,31 @@ _on_import           = {}
 _on_postimport       = {}
 _on_preprocess       = {}
 _on_postprocess      = {}
+_on_postadd          = []
 
 def reread_filetype_plugins():
     global _on_import
     global _on_postimport
     global _on_preprocess
     global _on_postprocess
-    _on_import           = {}
-    _on_postimport       = {}
-    _on_preprocess       = {}
-    _on_postprocess      = {}
+    global _on_postadd
+    _on_import           = defaultdict(list)
+    _on_postimport       = defaultdict(list)
+    _on_preprocess       = defaultdict(list)
+    _on_postprocess      = defaultdict(list)
+    _on_postadd          = []
 
     for plugin in _initialized_plugins:
         if isinstance(plugin, FileTypePlugin):
             for ft in plugin.file_types:
                 if plugin.on_import:
-                    if not _on_import.has_key(ft):
-                        _on_import[ft] = []
                     _on_import[ft].append(plugin)
                 if plugin.on_postimport:
-                    if not _on_postimport.has_key(ft):
-                        _on_postimport[ft] = []
                     _on_postimport[ft].append(plugin)
+                    _on_postadd.append(plugin)
                 if plugin.on_preprocess:
-                    if not _on_preprocess.has_key(ft):
-                        _on_preprocess[ft] = []
                     _on_preprocess[ft].append(plugin)
                 if plugin.on_postprocess:
-                    if not _on_postprocess.has_key(ft):
-                        _on_postprocess[ft] = []
                     _on_postprocess[ft].append(plugin)
 
 
@@ -187,6 +186,20 @@ def run_plugins_on_postimport(db, book_id, fmt):
                        plugin.name)
                 traceback.print_exc()
 
+def run_plugins_on_postadd(db, book_id, fmt_map):
+    customization = config['plugin_customization']
+    for plugin in _on_postadd:
+        if is_disabled(plugin):
+            continue
+        plugin.site_customization = customization.get(plugin.name, '')
+        with plugin:
+            try:
+                plugin.postadd(book_id, fmt_map, db)
+            except Exception:
+                print ('Running file type plugin %s failed with traceback:'%
+                       plugin.name)
+                traceback.print_exc()
+
 # }}}
 
 # Plugin customization {{{
@@ -234,6 +247,23 @@ def preferences_plugins():
                 yield plugin
 # }}}
 
+# Library Closed Plugins # {{{
+def available_library_closed_plugins():
+    customization = config['plugin_customization']
+    for plugin in _initialized_plugins:
+        if isinstance(plugin, LibraryClosedPlugin):
+            if not is_disabled(plugin):
+                plugin.site_customization = customization.get(plugin.name, '')
+                yield plugin
+
+def has_library_closed_plugins():
+    for plugin in _initialized_plugins:
+        if isinstance(plugin, LibraryClosedPlugin):
+            if not is_disabled(plugin):
+                return True
+    return False
+# }}}
+
 # Store Plugins # {{{
 
 def store_plugins():
@@ -268,17 +298,14 @@ _metadata_writers = {}
 def reread_metadata_plugins():
     global _metadata_readers
     global _metadata_writers
-    _metadata_readers = {}
+    _metadata_readers = defaultdict(list)
+    _metadata_writers = defaultdict(list)
     for plugin in _initialized_plugins:
         if isinstance(plugin, MetadataReaderPlugin):
             for ft in plugin.file_types:
-                if not _metadata_readers.has_key(ft):
-                    _metadata_readers[ft] = []
                 _metadata_readers[ft].append(plugin)
         elif isinstance(plugin, MetadataWriterPlugin):
             for ft in plugin.file_types:
-                if not _metadata_writers.has_key(ft):
-                    _metadata_writers[ft] = []
                 _metadata_writers[ft].append(plugin)
 
 def metadata_readers():
@@ -338,7 +365,7 @@ def get_file_type_metadata(stream, ftype):
     mi = MetaInformation(None, None)
 
     ftype = ftype.lower().strip()
-    if _metadata_readers.has_key(ftype):
+    if ftype in _metadata_readers:
         for plugin in _metadata_readers[ftype]:
             if not is_disabled(plugin):
                 with plugin:
@@ -355,7 +382,7 @@ def get_file_type_metadata(stream, ftype):
 
 def set_file_type_metadata(stream, mi, ftype, report_error=None):
     ftype = ftype.lower().strip()
-    if _metadata_writers.has_key(ftype):
+    if ftype in _metadata_writers:
         for plugin in _metadata_writers[ftype]:
             if not is_disabled(plugin):
                 with plugin:
@@ -437,14 +464,14 @@ def plugin_for_input_format(fmt):
             return plugin
 
 def all_input_formats():
-    formats = set([])
+    formats = set()
     for plugin in input_format_plugins():
         for format in plugin.file_types:
             formats.add(format)
     return formats
 
 def available_input_formats():
-    formats = set([])
+    formats = set()
     for plugin in input_format_plugins():
         if not is_disabled(plugin):
             for format in plugin.file_types:
@@ -686,7 +713,10 @@ def main(args=sys.argv):
     if opts.disable_plugin is not None:
         disable_plugin(opts.disable_plugin.strip())
     if opts.list_plugins:
-        fmt = '%-15s%-20s%-15s%-15s%s'
+        type_len = name_len = 0
+        for plugin in initialized_plugins():
+            type_len, name_len = max(type_len, len(plugin.type)), max(name_len, len(plugin.name))
+        fmt = '%-{}s%-{}s%-15s%-15s%s'.format(type_len+1, name_len+1)
         print fmt%tuple(('Type|Name|Version|Disabled|Site Customization'.split('|')))
         print
         for plugin in initialized_plugins():
@@ -708,4 +738,3 @@ def main(args=sys.argv):
 if __name__ == '__main__':
     sys.exit(main())
 # }}}
-

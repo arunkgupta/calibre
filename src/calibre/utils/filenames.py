@@ -3,7 +3,7 @@ Make strings safe for use as ASCII filenames, while trying to preserve as much
 meaning as possible.
 '''
 
-import os, errno, time
+import os, errno, time, shutil
 from math import ceil
 
 from calibre import sanitize_file_name, isbytestring, force_unicode, prints
@@ -181,7 +181,7 @@ def case_preserving_open_file(path, mode='wb', mkdir_mode=0o777):
         ans = fpath = cpath
     else:
         fname = components[-1]
-        ans = open(os.path.join(cpath, fname), mode)
+        ans = lopen(os.path.join(cpath, fname), mode)
         # Ensure file and all its metadata is written to disk so that subsequent
         # listdir() has file name in it. I don't know if this is actually
         # necessary, but given the diversity of platforms, best to be safe.
@@ -277,7 +277,7 @@ def windows_hardlink(src, dest):
         win32file.CreateHardLink(dest, src)
     except pywintypes.error as e:
         msg = u'Creating hardlink from %s to %s failed: %%s' % (src, dest)
-        raise Exception(msg % e)
+        raise OSError(msg % e)
     src_size = os.path.getsize(src)
     # We open and close dest, to ensure its directory entry is updated
     # see http://blogs.msdn.com/b/oldnewthing/archive/2011/12/26/10251026.aspx
@@ -294,7 +294,19 @@ def windows_hardlink(src, dest):
     sz = windows_get_size(dest)
     if sz != src_size:
         msg = u'Creating hardlink from %s to %s failed: %%s' % (src, dest)
-        raise Exception(msg % ('hardlink size: %d not the same as source size' % sz))
+        raise OSError(msg % ('hardlink size: %d not the same as source size' % sz))
+
+def windows_fast_hardlink(src, dest):
+    import win32file, pywintypes
+    try:
+        win32file.CreateHardLink(dest, src)
+    except pywintypes.error as e:
+        msg = u'Creating hardlink from %s to %s failed: %%s' % (src, dest)
+        raise OSError(msg % e)
+    ssz, dsz = windows_get_size(src), windows_get_size(dest)
+    if ssz != dsz:
+        msg = u'Creating hardlink from %s to %s failed: %%s' % (src, dest)
+        raise OSError(msg % ('hardlink size: %d not the same as source size: %s' % (dsz, ssz)))
 
 def windows_nlinks(path):
     import win32file
@@ -457,7 +469,7 @@ def atomic_rename(oldpath, newpath):
             try:
                 win32file.MoveFileEx(oldpath, newpath, win32file.MOVEFILE_REPLACE_EXISTING|win32file.MOVEFILE_WRITE_THROUGH)
                 break
-            except:
+            except Exception:
                 if i > 8:
                     raise
                 # Try the rename repeatedly in case something like a virus
@@ -527,3 +539,61 @@ def format_permissions(st_mode):
     if st_mode & stat.S_ISVTX:
         ans[9] = 't' if (st_mode & stat.S_IXUSR) else 'T'
     return ''.join(ans)
+
+def copyfile(src, dest):
+    shutil.copyfile(src, dest)
+    try:
+        shutil.copystat(src, dest)
+    except Exception:
+        pass
+
+def get_hardlink_function(src, dest):
+    if iswindows:
+        import win32file, win32api
+        root = dest[0] + b':'
+        try:
+            is_suitable = win32file.GetDriveType(root) not in (win32file.DRIVE_REMOTE, win32file.DRIVE_CDROM)
+            # See https://msdn.microsoft.com/en-us/library/windows/desktop/aa364993(v=vs.85).aspx
+            supports_hard_links = win32api.GetVolumeInformation(root + os.sep)[3] & 0x00400000
+        except Exception:
+            supports_hard_links = is_suitable = False
+        hardlink = windows_fast_hardlink if is_suitable and supports_hard_links and src[0].lower() == dest[0].lower() else None
+    else:
+        hardlink = os.link
+    return hardlink
+
+def copyfile_using_links(path, dest, dest_is_dir=True, filecopyfunc=copyfile):
+    path, dest = os.path.abspath(path), os.path.abspath(dest)
+    if dest_is_dir:
+        dest = os.path.join(dest, os.path.basename(path))
+    hardlink = get_hardlink_function(path, dest)
+    try:
+        hardlink(path, dest)
+    except Exception:
+        filecopyfunc(path, dest)
+
+def copytree_using_links(path, dest, dest_is_parent=True, filecopyfunc=copyfile):
+    path, dest = os.path.abspath(path), os.path.abspath(dest)
+    if dest_is_parent:
+        dest = os.path.join(dest, os.path.basename(path))
+    hardlink = get_hardlink_function(path, dest)
+    try:
+        os.makedirs(dest)
+    except EnvironmentError as e:
+        if e.errno != errno.EEXIST:
+            raise
+    for dirpath, dirnames, filenames in os.walk(path):
+        base = os.path.relpath(dirpath, path)
+        dest_base = os.path.join(dest, base)
+        for dname in dirnames:
+            try:
+                os.mkdir(os.path.join(dest_base, dname))
+            except EnvironmentError as e:
+                if e.errno != errno.EEXIST:
+                    raise
+        for fname in filenames:
+            src, df = os.path.join(dirpath, fname), os.path.join(dest_base, fname)
+            try:
+                hardlink(src, df)
+            except Exception:
+                filecopyfunc(src, df)

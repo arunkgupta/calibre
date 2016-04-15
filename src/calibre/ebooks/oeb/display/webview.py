@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -51,7 +51,7 @@ def load_html(path, view, codec='utf-8', mime_type=None,
     loading_url = QUrl.fromLocalFile(path)
     pre_load_callback(loading_url)
 
-    if force_as_html or re.search(r'<[a-zA-Z0-9-]+:svg', html) is None:
+    if force_as_html or re.search(r'<[a-zA-Z0-9-]+:svg', html) is None and '<![CDATA[' not in html:
         view.setHtml(html, loading_url)
     else:
         view.setContent(QByteArray(html.encode(codec)), mime_type,

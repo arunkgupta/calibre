@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -18,6 +18,6 @@ class PluginWidget(Widget, Ui_Form):
 
     def __init__(self, parent, get_option, get_help, db=None, book_id=None):
         Widget.__init__(self, parent,
-            ['docx_no_cover', ])
+            ['docx_no_cover', 'docx_no_pagebreaks_between_notes', 'docx_inline_subsup'])
         self.initialize_options(get_option, get_help, db, book_id)
 

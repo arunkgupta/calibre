@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement
 
@@ -10,6 +10,7 @@ import sys, os, shutil, plistlib, subprocess, glob, zipfile, tempfile, \
     py_compile, stat, operator, time
 from functools import partial
 from contextlib import contextmanager
+from itertools import repeat
 
 abspath, join, basename = os.path.abspath, os.path.join, os.path.basename
 
@@ -29,7 +30,8 @@ ENV = dict(
         MAGICK_CODER_FILTER_PATH=MAGICK_HOME+'/modules-Q16/filters',
         QT_PLUGIN_PATH='@executable_path/../MacOS/qt-plugins',
         PYTHONIOENCODING='UTF-8',
-        )
+        SSL_CERT_FILE='@executable_path/../Resources/resources/mozilla-ca-certs.pem',
+)
 
 
 info = warn = None
@@ -92,8 +94,8 @@ def compile_launchers(contents_dir, xprograms, pyver):
     src = src.replace('/*ENV_VARS*/', env)
     src = src.replace('/*ENV_VAR_VALS*/', env_vals)
     programs = [lib]
-    for program, x in xprograms.items():
-        module, func = x
+    for program, x in xprograms.iteritems():
+        module, func, ptype = x
         info('\tCompiling', program)
         out = join(contents_dir, 'MacOS', program)
         programs.append(out)
@@ -101,6 +103,7 @@ def compile_launchers(contents_dir, xprograms, pyver):
         psrc = psrc.replace('**MODULE**', module)
         psrc = psrc.replace('**FUNCTION**', func)
         psrc = psrc.replace('**PYVER**', pyver)
+        psrc = psrc.replace('**IS_GUI**', ('1' if ptype == 'gui' else '0'))
         fsrc = '/tmp/%s.c'%program
         with open(fsrc, 'wb') as f:
             f.write(psrc)
@@ -230,9 +233,9 @@ class Py2App(object):
         programs = {}
         progs = []
         for x in ('console', 'gui'):
-            progs += list(zip(basenames[x], main_modules[x], main_functions[x]))
-        for program, module, func in progs:
-            programs[program] = (module, func)
+            progs += list(zip(basenames[x], main_modules[x], main_functions[x], repeat(x)))
+        for program, module, func, ptype in progs:
+            programs[program] = (module, func, ptype)
         programs = compile_launchers(self.contents_dir, programs,
                 self.version_info)
         for out in programs:
@@ -259,12 +262,15 @@ class Py2App(object):
     @flush
     def get_local_dependencies(self, path_to_lib):
         for x, is_id in self.get_dependencies(path_to_lib):
-            for y in (SW+'/lib/', SW+'/qt/lib/', SW+'/python/Python.framework/',):
-                if x.startswith(y):
-                    if y == SW+'/python/Python.framework/':
-                        y = SW+'/python/'
-                    yield x, x[len(y):], is_id
-                    break
+            if x.startswith('@rpath/Qt'):
+                yield x, x[len('@rpath/'):], is_id
+            else:
+                for y in (SW+'/lib/', SW+'/python/Python.framework/', SW+'/private/ssl/lib/'):
+                    if x.startswith(y):
+                        if y == SW+'/python/Python.framework/':
+                            y = SW+'/python/'
+                        yield x, x[len(y):], is_id
+                        break
 
     @flush
     def change_dep(self, old_dep, new_dep, is_id, path_to_lib):
@@ -333,10 +339,9 @@ class Py2App(object):
         self.set_id(lib, self.FID+'/'+rpath)
         self.fix_dependencies_in_lib(lib)
         # The following is needed for codesign in OS X >= 10.9.5
-        # See https://bugreports.qt-project.org/browse/QTBUG-32895
+        # The presence of the .prl file in the root of the framework causes
+        # codesign to fail.
         with current_dir(dest):
-            os.rename('Contents', 'Versions/Current/Resources')
-            os.symlink('Versions/Current/Resources', 'Resources')
             for x in os.listdir('.'):
                 if x != 'Versions' and not os.path.islink(x):
                     os.remove(x)
@@ -411,16 +416,19 @@ class Py2App(object):
     @flush
     def add_poppler(self):
         info('\nAdding poppler')
-        for x in ('libpoppler.46.dylib',):
+        for x in ('libpoppler.56.dylib',):
             self.install_dylib(os.path.join(SW, 'lib', x))
         for x in ('pdftohtml', 'pdftoppm', 'pdfinfo'):
             self.install_dylib(os.path.join(SW, 'bin', x), False)
 
     @flush
     def add_imaging_libs(self):
-        info('\nAdding libjpeg, libpng and libwebp')
+        info('\nAdding libjpeg, libpng, libwebp, optipng and mozjpeg')
         for x in ('jpeg.8', 'png16.16', 'webp.5'):
             self.install_dylib(os.path.join(SW, 'lib', 'lib%s.dylib' % x))
+        self.install_dylib(os.path.join(SW, 'bin', 'optipng'), False)
+        for x in ('jpegtran', 'cjpeg'):
+            self.install_dylib(os.path.join(SW, 'private', 'mozjpeg', 'bin', x), False)
 
     @flush
     def add_fontconfig(self):
@@ -464,11 +472,15 @@ class Py2App(object):
 
     @flush
     def add_misc_libraries(self):
-        for x in ('usb-1.0.0', 'mtp.9', 'ltdl.7',
-                  'chm.0', 'sqlite3.0', 'icudata.53', 'icui18n.53', 'icuio.53', 'icuuc.53'):
+        for x in (
+                'usb-1.0.0', 'mtp.9', 'ltdl.7', 'chm.0', 'sqlite3.0',
+                'icudata.53', 'icui18n.53', 'icuio.53', 'icuuc.53',
+                'crypto.1.0.0', 'ssl.1.0.0'
+        ):
             info('\nAdding', x)
             x = 'lib%s.dylib'%x
-            shutil.copy2(join(SW, 'lib', x), self.frameworks_dir)
+            src = join(SW, 'private', 'ssl', 'lib', x) if ('ssl' in x or 'crypto' in x) else join(SW, 'lib', x)
+            shutil.copy2(src, self.frameworks_dir)
             dest = join(self.frameworks_dir, x)
             self.set_id(dest, self.FID+'/'+x)
             self.fix_dependencies_in_lib(dest)

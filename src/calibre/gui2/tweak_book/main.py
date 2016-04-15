@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -24,6 +24,14 @@ files inside the book which will be opened for editing automatically.
 '''))
     setup_gui_option_parser(parser)
     return parser
+
+class EventAccumulator(object):
+
+    def __init__(self):
+        self.events = []
+
+    def __call__(self, ev):
+        self.events.append(ev)
 
 def gui_main(path=None, notify=None):
     _run(['ebook-edit', path], notify=notify)
@@ -55,15 +63,21 @@ def _run(args, notify=None):
     decouple('edit-book-')
     override = 'calibre-edit-book' if islinux else None
     app = Application(args, override_program_name=override, color_prefs=tprefs)
+    app.file_event_hook = EventAccumulator()
     app.load_builtin_fonts()
     app.setWindowIcon(QIcon(I('tweak.png')))
     Application.setOrganizationName(ORG_NAME)
     Application.setApplicationName(APP_UID)
     main = Main(opts, notify=notify)
-    sys.excepthook = main.unhandled_exception
+    main.set_exception_handler()
     main.show()
     if len(args) > 1:
         main.boss.open_book(args[1], edit_file=args[2:], clear_notify_data=False)
+    else:
+        for path in reversed(app.file_event_hook.events):
+            main.boss.open_book(path)
+            break
+        app.file_event_hook = main.boss.open_book
     app.exec_()
     # Ensure that the parse worker has quit so that temp files can be deleted
     # on windows

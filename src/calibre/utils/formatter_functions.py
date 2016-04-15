@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 
 '''
@@ -130,7 +130,7 @@ class FormatterFunction(object):
         if isinstance(ret, (str, unicode)):
             return ret
         if isinstance(ret, list):
-            return ','.join(list)
+            return ','.join(ret)
         if isinstance(ret, (int, float, bool)):
             return unicode(ret)
 
@@ -329,7 +329,7 @@ class BuiltinPrint(BuiltinFormatterFunction):
 
     def evaluate(self, formatter, kwargs, mi, locals, *args):
         print args
-        return None
+        return ''
 
 class BuiltinField(BuiltinFormatterFunction):
     name = 'field'
@@ -348,7 +348,13 @@ class BuiltinRawField(BuiltinFormatterFunction):
             'without applying any formatting.')
 
     def evaluate(self, formatter, kwargs, mi, locals, name):
-        return unicode(getattr(mi, name, None))
+        res = getattr(mi, name, None)
+        if isinstance(res, list):
+            fm = mi.metadata_for_field(name)
+            if fm is None:
+                return ', '.join(res)
+            return fm['is_multiple']['list_to_ui'].join(res)
+        return unicode(res)
 
 class BuiltinRawList(BuiltinFormatterFunction):
     name = 'raw_list'
@@ -572,7 +578,7 @@ class BuiltinReGroup(BuiltinFormatterFunction):
     arg_count = -1
     category = 'String manipulation'
     __doc__ = doc = _('re_group(val, pattern, template_for_group_1, for_group_2, ...) -- '
-            'return a string made by applying the reqular expression pattern '
+            'return a string made by applying the regular expression pattern '
             'to the val and replacing each matched instance with the string '
             'computed by replacing each matched group by the value returned '
             'by the corresponding template. The original matched value for the '
@@ -735,10 +741,10 @@ class BuiltinFormatsModtimes(BuiltinFormatterFunction):
     arg_count = 1
     category = 'Get values from metadata'
     __doc__ = doc = _('formats_modtimes(date_format) -- return a comma-separated '
-                  'list of colon_separated items representing modification times '
+                  'list of colon-separated items representing modification times '
                   'for the formats of a book. The date_format parameter '
                   'specifies how the date is to be formatted. See the '
-                  'date_format function for details. You can use the select '
+                  'format_date function for details. You can use the select '
                   'function to get the mod time for a specific '
                   'format. Note that format names are always uppercase, '
                   'as in EPUB.'
@@ -755,7 +761,7 @@ class BuiltinFormatsSizes(BuiltinFormatterFunction):
     arg_count = 0
     category = 'Get values from metadata'
     __doc__ = doc = _('formats_sizes() -- return a comma-separated list of '
-                      'colon_separated items representing sizes in bytes '
+                      'colon-separated items representing sizes in bytes '
                       'of the formats of a book. You can use the select '
                       'function to get the size for a specific '
                       'format. Note that format names are always uppercase, '
@@ -771,7 +777,7 @@ class BuiltinFormatsPaths(BuiltinFormatterFunction):
     arg_count = 0
     category = 'Get values from metadata'
     __doc__ = doc = _('formats_paths() -- return a comma-separated list of '
-                      'colon_separated items representing full path to '
+                      'colon-separated items representing full path to '
                       'the formats of a book. You can use the select '
                       'function to get the path for a specific '
                       'format. Note that format names are always uppercase, '
@@ -1066,7 +1072,7 @@ class BuiltinAnd(BuiltinFormatterFunction):
     __doc__ = doc = _('and(value, value, ...) -- '
             'returns the string "1" if all values are not empty, otherwise '
             'returns the empty string. This function works well with test or '
-            'first_non_empty. You can have as many values as you want.')
+            'first_non_empty. You can have as many values as you want. ')
 
     def evaluate(self, formatter, kwargs, mi, locals, *args):
         i = 0
@@ -1100,7 +1106,7 @@ class BuiltinNot(BuiltinFormatterFunction):
     __doc__ = doc = _('not(value) -- '
             'returns the string "1" if the value is empty, otherwise '
             'returns the empty string. This function works well with test or '
-            'first_non_empty. You can have as many values as you want.')
+            'first_non_empty.')
 
     def evaluate(self, formatter, kwargs, mi, locals, val):
         return '' if val else '1'
@@ -1195,7 +1201,7 @@ class BuiltinListEquals(BuiltinFormatterFunction):
             'otherwise return no_val. The items are determined by splitting '
             'each list using the appropriate separator character (sep1 or '
             'sep2). The order of items in the lists is not relevant. '
-            'The compare is case insensitive.')
+            'The comparison is case insensitive.')
 
     def evaluate(self, formatter, kwargs, mi, locals, list1, sep1, list2, sep2, yes_val, no_val):
         s1 = set([icu_lower(l.strip()) for l in list1.split(sep1) if l.strip()])

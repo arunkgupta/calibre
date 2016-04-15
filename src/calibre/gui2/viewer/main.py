@@ -1,38 +1,41 @@
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import traceback, os, sys, functools
+import traceback, os, sys, functools, time
 from functools import partial
 from threading import Thread
+from collections import namedtuple
 
 from PyQt5.Qt import (
     QApplication, Qt, QIcon, QTimer, QByteArray, QSize, QTime,
-    QPropertyAnimation, QUrl, QInputDialog, QAction, QModelIndex)
+    QPropertyAnimation, QUrl, QInputDialog, QAction, QModelIndex, pyqtSignal)
 
 from calibre.gui2.viewer.ui import Main as MainWindow
-from calibre.gui2.viewer.printing import Printing
 from calibre.gui2.viewer.toc import TOC
 from calibre.gui2.widgets import ProgressIndicator
 from calibre.gui2 import (
     Application, ORG_NAME, APP_UID, choose_files, info_dialog, error_dialog,
     open_url, setup_gui_option_parser)
 from calibre.ebooks.oeb.iterator.book import EbookIterator
-from calibre.ebooks import DRMError
 from calibre.constants import islinux, filesystem_encoding
 from calibre.utils.config import Config, StringConfig, JSONConfig
 from calibre.customize.ui import available_input_formats
-from calibre import as_unicode, force_unicode, isbytestring
+from calibre import as_unicode, force_unicode, isbytestring, prints
 from calibre.ptempfile import reset_base_dir
+from calibre.utils.ipc import viewer_socket_address, RC
 from calibre.utils.zipfile import BadZipfile
 from calibre.utils.localization import canonicalize_lang, lang_as_iso639_1, get_lang
 
 vprefs = JSONConfig('viewer')
+vprefs.defaults['singleinstance'] = False
 dprefs = JSONConfig('viewer_dictionaries')
 dprefs.defaults['word_lookups'] = {}
+singleinstance_name = 'calibre_viewer'
 
 class Worker(Thread):
 
     def run(self):
+        from calibre.utils.ipc.simple_worker import WorkerError
         try:
             Thread.run(self)
             self.exception = self.traceback = None
@@ -41,6 +44,9 @@ class Worker(Thread):
                 'This ebook is corrupted and cannot be opened. If you '
                 'downloaded it from somewhere, try downloading it again.')
             self.traceback = ''
+        except WorkerError as err:
+            self.exception = Exception(_('Failed to read book, {0} click "Show Details" for more information').format(self.path_to_ebook))
+            self.traceback = err.orig_tb or as_unicode(err)
         except Exception as err:
             self.exception = err
             self.traceback = traceback.format_exc()
@@ -67,6 +73,19 @@ def lookup_website(lang):
     wm = dprefs['word_lookups']
     return wm.get(lang, default_lookup_website(lang))
 
+def listen(self):
+    while True:
+        try:
+            conn = self.listener.accept()
+        except Exception:
+            break
+        try:
+            self.msg_from_anotherinstance.emit(conn.recv())
+            conn.close()
+        except Exception as e:
+            prints('Failed to read message from other instance with error: %s' % as_unicode(e))
+    self.listener = None
+
 class EbookViewer(MainWindow):
 
     STATE_VERSION = 2
@@ -74,12 +93,22 @@ class EbookViewer(MainWindow):
             'into pages like a paper book')
     PAGED_MODE_TT = _('Switch to flow mode - where the text is not broken up '
             'into pages')
+    AUTOSAVE_INTERVAL = 10  # seconds
+    msg_from_anotherinstance = pyqtSignal(object)
 
     def __init__(self, pathtoebook=None, debug_javascript=False, open_at=None,
-                 start_in_fullscreen=False):
+                 start_in_fullscreen=False, continue_reading=False, listener=None):
         MainWindow.__init__(self, debug_javascript)
         self.view.magnification_changed.connect(self.magnification_changed)
+        self.closed = False
         self.show_toc_on_open = False
+        self.listener = listener
+        self.lookup_error_reported = {}
+        if listener is not None:
+            t = Thread(name='ConnListener', target=listen, args=(self,))
+            t.daemon = True
+            t.start()
+            self.msg_from_anotherinstance.connect(self.another_instance_wants_to_talk, type=Qt.QueuedConnection)
         self.current_book_has_toc = False
         self.iterator          = None
         self.current_page      = None
@@ -89,12 +118,18 @@ class EbookViewer(MainWindow):
         self.pending_reference = None
         self.pending_bookmark  = None
         self.pending_restore   = False
+        self.pending_goto_page = None
         self.cursor_hidden     = False
         self.existing_bookmarks= []
         self.selected_text     = None
         self.was_maximized     = False
+        self.page_position_on_footnote_toggle = []
         self.read_settings()
+        self.autosave_timer = t = QTimer(self)
+        t.setInterval(self.AUTOSAVE_INTERVAL * 1000), t.setSingleShot(True)
+        t.timeout.connect(self.autosave)
         self.pos.value_changed.connect(self.update_pos_label)
+        self.pos.value_changed.connect(self.autosave_timer.start)
         self.pos.setMinimumWidth(150)
         self.setFocusPolicy(Qt.StrongFocus)
         self.view.set_manager(self)
@@ -130,6 +165,17 @@ class EbookViewer(MainWindow):
         self.search.focus_to_library.connect(lambda: self.view.setFocus(Qt.OtherFocusReason))
         self.toc.pressed[QModelIndex].connect(self.toc_clicked)
         self.toc.searched.connect(partial(self.toc_clicked, force=True))
+        def toggle_toc(ev):
+            try:
+                key = self.view.shortcuts.get_match(ev)
+            except AttributeError:
+                pass
+            if key == 'Table of Contents':
+                ev.accept()
+                self.action_table_of_contents.trigger()
+                return True
+            return False
+        self.toc.handle_shortcuts = toggle_toc
         self.reference.goto.connect(self.goto)
         self.bookmarks.edited.connect(self.bookmarks_edited)
         self.bookmarks.activated.connect(self.goto_bookmark)
@@ -141,6 +187,8 @@ class EbookViewer(MainWindow):
         if pathtoebook is not None:
             f = functools.partial(self.load_ebook, pathtoebook, open_at=open_at)
             QTimer.singleShot(50, f)
+        elif continue_reading:
+            QTimer.singleShot(50, self.continue_reading)
         self.window_mode_changed = None
         self.toggle_toolbar_action = QAction(_('Show/hide controls'), self)
         self.toggle_toolbar_action.setCheckable(True)
@@ -148,12 +196,11 @@ class EbookViewer(MainWindow):
         self.toolbar_hidden = None
         self.addAction(self.toggle_toolbar_action)
         self.full_screen_label_anim = QPropertyAnimation(
-                self.full_screen_label, 'size')
+                self.full_screen_label, b'size')
         self.clock_timer = QTimer(self)
         self.clock_timer.timeout.connect(self.update_clock)
 
         self.action_print.triggered.connect(self.print_book)
-        self.print_menu.actions()[0].triggered.connect(self.print_preview)
         self.clear_recent_history_action = QAction(
                 _('Clear list of recently opened books'), self)
         self.clear_recent_history_action.triggered.connect(self.clear_recent_history)
@@ -238,11 +285,18 @@ class EbookViewer(MainWindow):
                 m.addAction(RecentAction(path, m))
                 count += 1
 
+    def continue_reading(self):
+        actions = self.open_history_menu.actions()[2:]
+        if actions:
+            actions[0].trigger()
+
     def shutdown(self):
         if self.isFullScreen() and not self.view.document.start_in_fullscreen:
             self.action_full_screen.trigger()
             return False
         self.save_state()
+        if self.listener is not None:
+            self.listener.close()
         return True
 
     def quit(self):
@@ -250,7 +304,11 @@ class EbookViewer(MainWindow):
             QApplication.instance().quit()
 
     def closeEvent(self, e):
+        if self.closed:
+            e.ignore()
+            return
         if self.shutdown():
+            self.closed = True
             return MainWindow.closeEvent(self, e)
         else:
             e.ignore()
@@ -295,25 +353,24 @@ class EbookViewer(MainWindow):
     def lookup(self, word):
         from urllib import quote
         word = quote(word.encode('utf-8'))
+        lang = canonicalize_lang(self.view.current_language) or get_lang() or 'en'
         try:
-            url = lookup_website(canonicalize_lang(self.view.current_language) or 'en').format(word=word)
+            url = lookup_website(lang).format(word=word)
         except Exception:
-            traceback.print_exc()
-            url = default_lookup_website(canonicalize_lang(self.view.current_language) or 'en').format(word=word)
+            if not self.lookup_error_reported.get(lang):
+                self.lookup_error_reported[lang] = True
+                error_dialog(self, _('Failed to use dictionary'), _(
+                    'Failed to use the custom dictionary for language: %s Falling back to default dictionary.') % lang,
+                             det_msg=traceback.format_exc(), show=True)
+            url = default_lookup_website(lang).format(word=word)
         open_url(url)
 
-    def get_remember_current_page_opt(self):
-        from calibre.gui2.viewer.documentview import config
-        c = config().parse()
-        return c.remember_current_page
-
     def print_book(self):
-        p = Printing(self.iterator, self)
-        p.start_print()
-
-    def print_preview(self):
-        p = Printing(self.iterator, self)
-        p.start_preview()
+        if self.iterator is None:
+            return error_dialog(self, _('No book opened'), _(
+                'Cannot print as no book is opened'), show=True)
+        from calibre.gui2.viewer.printing import print_book
+        print_book(self.iterator.pathtoebook, self, self.current_title)
 
     def toggle_fullscreen(self):
         if self.isFullScreen():
@@ -345,7 +402,6 @@ class EbookViewer(MainWindow):
             a.setEndValue(QSize(width, height))
             a.start()
             QTimer.singleShot(3500, self.full_screen_label.hide)
-        self.view.document.switch_to_fullscreen_mode()
         if self.view.document.fullscreen_clock:
             self.show_clock()
         if self.view.document.fullscreen_pos:
@@ -404,17 +460,6 @@ class EbookViewer(MainWindow):
             super(EbookViewer, self).showMaximized()
         else:
             super(EbookViewer, self).showNormal()
-
-    def handle_window_mode_toggle(self):
-        if self.window_mode_changed:
-            fs = self.window_mode_changed == 'fullscreen'
-            self.window_mode_changed = None
-            if fs:
-                self.show_full_screen_label()
-            else:
-                self.view.document.switch_to_window_mode()
-            self.view.document.page_position.restore()
-            self.scrolled(self.view.scroll_fraction)
 
     def goto(self, ref):
         if ref:
@@ -676,6 +721,25 @@ class EbookViewer(MainWindow):
         self.open_progress_indicator(_('Laying out %s')%self.current_title)
         self.view.load_path(path, pos=pos)
 
+    def footnote_visibility_changed(self, is_visible):
+        if self.view.document.in_paged_mode:
+            pp = namedtuple('PagePosition', 'time is_visible page_dimensions multiplier last_loaded_path page_number after_resize_page_number')
+            self.page_position_on_footnote_toggle.append(pp(
+                time.time(), is_visible, self.view.document.page_dimensions, self.view.multiplier,
+                self.view.last_loaded_path, self.view.document.page_number, None))
+
+    def pre_footnote_toggle_position(self):
+        num = len(self.page_position_on_footnote_toggle)
+        if self.view.document.in_paged_mode and num > 1 and num % 2 == 0:
+            two, one = self.page_position_on_footnote_toggle.pop(), self.page_position_on_footnote_toggle.pop()
+            if (
+                    time.time() - two.time < 1 and not two.is_visible and one.is_visible and
+                    one.last_loaded_path == two.last_loaded_path and two.last_loaded_path == self.view.last_loaded_path and
+                    one.page_dimensions == self.view.document.page_dimensions and one.multiplier == self.view.multiplier and
+                    one.after_resize_page_number == self.view.document.page_number
+            ):
+                return one.page_number
+
     def viewport_resize_started(self, event):
         if not self.resize_in_progress:
             # First resize, so save the current page position
@@ -693,19 +757,36 @@ class EbookViewer(MainWindow):
         # There hasn't been a resize event for some time
         # restore the current page position.
         self.resize_in_progress = False
-        if self.window_mode_changed:
+        wmc, self.window_mode_changed = self.window_mode_changed, None
+        fs = wmc == 'fullscreen'
+        if wmc:
+            # Sets up body text margins, which can be limited in fs mode by a
+            # separate config option, so must be done before relayout of text
+            (self.view.document.switch_to_fullscreen_mode if fs else self.view.document.switch_to_window_mode)()
+        # Re-layout text, must be done before restoring page position
+        self.view.document.after_resize()
+        if wmc:
             # This resize is part of a window mode change, special case it
-            self.handle_window_mode_toggle()
-        else:
+            if fs:
+                self.show_full_screen_label()
             self.view.document.page_position.restore()
+            self.scrolled(self.view.scroll_fraction)
+        else:
             if self.isFullScreen():
                 self.relayout_fullscreen_labels()
-        self.view.document.after_resize()
-        # For some reason scroll_fraction returns incorrect results in paged
-        # mode for some time after a resize is finished. No way of knowing
-        # exactly how long, so we update it in a second, in the hopes that it
-        # will be enough *most* of the time.
-        QTimer.singleShot(1000, self.update_page_number)
+
+            pre_footnote_pos = self.pre_footnote_toggle_position()
+            if pre_footnote_pos is not None:
+                self.view.document.page_number = pre_footnote_pos
+            else:
+                self.view.document.page_position.restore()
+                self.update_page_number()
+                if len(self.page_position_on_footnote_toggle) % 2 == 1:
+                    self.page_position_on_footnote_toggle[-1] = self.page_position_on_footnote_toggle[-1]._replace(
+                        after_resize_page_number=self.view.document.page_number)
+        if self.pending_goto_page is not None:
+            pos, self.pending_goto_page = self.pending_goto_page, None
+            self.goto_page(pos, loaded_check=False)
 
     def update_page_number(self):
         self.set_page_number(self.view.document.scroll_fraction)
@@ -738,6 +819,8 @@ class EbookViewer(MainWindow):
     def do_config(self):
         self.view.config(self)
         self.load_theme_menu()
+        if self.iterator is not None:
+            self.iterator.copy_bookmarks_to_file = self.view.document.copy_bookmarks_to_file
         from calibre.gui2 import config
         if not config['viewer_search_history']:
             self.search.clear_history()
@@ -761,6 +844,9 @@ class EbookViewer(MainWindow):
             self.set_bookmarks(self.iterator.bookmarks)
             self.bookmarks.set_current_bookmark(bm)
 
+    def autosave(self):
+        self.save_current_position(no_copy_to_file=True)
+
     def bookmarks_edited(self, bookmarks):
         self.build_bookmarks_menu(bookmarks)
         self.iterator.set_bookmarks(bookmarks)
@@ -776,7 +862,7 @@ class EbookViewer(MainWindow):
         self.existing_bookmarks = []
         for bm in bookmarks:
             if bm['title'] == 'calibre_current_page_bookmark':
-                if self.get_remember_current_page_opt():
+                if self.view.document.remember_current_page:
                     current_page = bm
             else:
                 self.existing_bookmarks.append(bm['title'])
@@ -794,36 +880,46 @@ class EbookViewer(MainWindow):
         bm['title'] = 'calibre_current_page_bookmark'
         return bm
 
-    def save_current_position(self):
-        if not self.get_remember_current_page_opt():
+    def save_current_position(self, no_copy_to_file=False):
+        if not self.view.document.remember_current_page:
             return
         if hasattr(self, 'current_index'):
             try:
-                self.iterator.add_bookmark(self.current_page_bookmark)
+                self.iterator.add_bookmark(self.current_page_bookmark, no_copy_to_file=no_copy_to_file)
             except:
                 traceback.print_exc()
+
+    def another_instance_wants_to_talk(self, msg):
+        try:
+            path, open_at = msg
+        except Exception:
+            return
+        self.load_ebook(path, open_at=open_at)
+        self.raise_()
 
     def load_ebook(self, pathtoebook, open_at=None, reopen_at=None):
         if self.iterator is not None:
             self.save_current_position()
             self.iterator.__exit__()
-        self.iterator = EbookIterator(pathtoebook)
+        self.iterator = EbookIterator(pathtoebook, copy_bookmarks_to_file=self.view.document.copy_bookmarks_to_file)
         self.history.clear()
         self.open_progress_indicator(_('Loading ebook...'))
         worker = Worker(target=partial(self.iterator.__enter__, view_kepub=True))
+        worker.path_to_ebook = pathtoebook
         worker.start()
         while worker.isAlive():
             worker.join(0.1)
             QApplication.processEvents()
         if worker.exception is not None:
-            if isinstance(worker.exception, DRMError):
+            tb = worker.traceback.strip()
+            if tb and tb.splitlines()[-1].startswith('DRMError:'):
                 from calibre.gui2.dialogs.drm_error import DRMErrorMessage
                 DRMErrorMessage(self).exec_()
             else:
                 r = getattr(worker.exception, 'reason', worker.exception)
                 error_dialog(self, _('Could not open ebook'),
                         as_unicode(r) or _('Unknown error'),
-                        det_msg=worker.traceback, show=True)
+                        det_msg=tb, show=True)
             self.close_progress_indicator()
         else:
             self.metadata.show_opf(self.iterator.opf,
@@ -879,7 +975,10 @@ class EbookViewer(MainWindow):
                         open_at = self.pos.maximum()
                     if open_at < self.pos.minimum():
                         open_at = self.pos.minimum()
-                    self.goto_page(open_at, loaded_check=False)
+                    if self.resize_in_progress:
+                        self.pending_goto_page = open_at
+                    else:
+                        self.goto_page(open_at, loaded_check=False)
 
     def set_vscrollbar_value(self, pagenum):
         self.vertical_scrollbar.blockSignals(True)
@@ -940,6 +1039,7 @@ class EbookViewer(MainWindow):
             'Bookmark': bac,
             'Reload': self.action_reload,
             'Table of Contents': self.action_table_of_contents,
+            'Print': self.action_print,
         }.get(key, None)
         if action is not None:
             event.accept()
@@ -1004,6 +1104,8 @@ def config(defaults=None):
     c.add_opt('open_at', ['--open-at'], default=None,
         help=_('The position at which to open the specified book. The position is '
             'a location as displayed in the top left corner of the viewer.'))
+    c.add_opt('continue_reading', ['--continue'], default=False,
+        help=_('Continue reading at the previously opened book'))
 
     return c
 
@@ -1017,6 +1119,40 @@ View an ebook.
     setup_gui_option_parser(parser)
     return parser
 
+def create_listener():
+    if islinux:
+        from calibre.utils.ipc.server import LinuxListener as Listener
+    else:
+        from multiprocessing.connection import Listener
+    return Listener(address=viewer_socket_address())
+
+
+def ensure_single_instance(args, open_at):
+    try:
+        from calibre.utils.lock import singleinstance
+        si = singleinstance(singleinstance_name)
+    except Exception:
+        import traceback
+        error_dialog(None, _('Cannot start viewer'), _(
+            'Failed to start viewer, could not insure only a single instance of the viewer is running. Click "Show Details" for more information'),
+                    det_msg=traceback.format_exc(), show=True)
+        raise SystemExit(1)
+    if not si:
+        if len(args) > 1:
+            t = RC(print_error=True, socket_address=viewer_socket_address())
+            t.start()
+            t.join(3.0)
+            if t.is_alive() or t.conn is None:
+                error_dialog(None, _('Connect to viewer failed'), _(
+                    'Unable to connect to existing viewer window, try restarting the viewer.'), show=True)
+                raise SystemExit(1)
+            t.conn.send((os.path.abspath(args[1]), open_at))
+            t.conn.close()
+            prints('Opened book in existing viewer instance')
+        raise SystemExit(0)
+    listener = create_listener()
+    return listener
+
 
 def main(args=sys.argv):
     # Ensure viewer can continue to function if GUI is closed
@@ -1026,23 +1162,32 @@ def main(args=sys.argv):
     parser = option_parser()
     opts, args = parser.parse_args(args)
     open_at = float(opts.open_at.replace(',', '.')) if opts.open_at else None
+    listener = None
     override = 'calibre-ebook-viewer' if islinux else None
     app = Application(args, override_program_name=override, color_prefs=vprefs)
     app.load_builtin_fonts()
     app.setWindowIcon(QIcon(I('viewer.png')))
     QApplication.setOrganizationName(ORG_NAME)
     QApplication.setApplicationName(APP_UID)
+
+    if vprefs['singleinstance']:
+        try:
+            listener = ensure_single_instance(args, open_at)
+        except Exception as e:
+            import traceback
+            error_dialog(None, _('Failed to start viewer'), as_unicode(e), det_msg=traceback.format_exc(), show=True)
+            raise SystemExit(1)
+
     main = EbookViewer(args[1] if len(args) > 1 else None,
-            debug_javascript=opts.debug_javascript, open_at=open_at,
-                       start_in_fullscreen=opts.full_screen)
+            debug_javascript=opts.debug_javascript, open_at=open_at, continue_reading=opts.continue_reading,
+                       start_in_fullscreen=opts.full_screen, listener=listener)
     app.installEventFilter(main)
     # This is needed for paged mode. Without it, the first document that is
     # loaded will have extra blank space at the bottom, as
     # turn_off_internal_scrollbars does not take effect for the first
     # rendered document
     main.view.load_path(P('viewer/blank.html', allow_user_override=False))
-
-    sys.excepthook = main.unhandled_exception
+    main.set_exception_handler()
     main.show()
     if opts.raise_window:
         main.raise_()
@@ -1052,4 +1197,3 @@ def main(args=sys.argv):
 
 if __name__ == '__main__':
     sys.exit(main())
-

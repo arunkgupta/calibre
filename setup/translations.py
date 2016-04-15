@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement
 
@@ -7,6 +7,7 @@ __copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
 __docformat__ = 'restructuredtext en'
 
 import os, tempfile, shutil, subprocess, glob, re, time, textwrap, cPickle, shlex, json, errno
+from collections import defaultdict
 from locale import normalize as normalize_locale
 from functools import partial
 
@@ -45,7 +46,7 @@ class POT(Command):  # {{{
         self.tx(['push', '-r', 'calibre.'+resource, '-s'], cwd=self.TRANSLATIONS)
 
     def source_files(self):
-        ans = []
+        ans = [self.a(self.j(self.d(self.SRC), 'manual', 'custom.py'))]
         for root, _, files in os.walk(self.j(self.SRC, __appname__)):
             for name in files:
                 if name.endswith('.py'):
@@ -84,6 +85,18 @@ class POT(Command):  # {{{
 
         return '\n'.join(ans)
 
+    def get_content_server_strings(self):
+        self.info('Generating translation template for content_server')
+        from calibre import walk
+        from calibre.utils.rapydscript import create_pot
+        files = (f for f in walk(self.j(self.SRC, 'pyj')) if f.endswith('.pyj'))
+        pottext = create_pot(files).encode('utf-8')
+        dest = self.j(self.TRANSLATIONS, 'content-server', 'content-server.pot')
+        with open(dest, 'wb') as f:
+            f.write(pottext)
+        self.upload_pot(dest, resource='content_server')
+        self.git(['add', dest])
+
     def get_user_manual_docs(self):
         self.info('Generating translation templates for user_manual')
         base = tempfile.mkdtemp()
@@ -118,6 +131,7 @@ class POT(Command):  # {{{
 
     def run(self, opts):
         require_git_master()
+        self.get_content_server_strings()
         self.get_user_manual_docs()
         pot_header = textwrap.dedent('''\
         # Translation template file..
@@ -201,6 +215,7 @@ class Translations(POT):  # {{{
         return locale, os.path.join(self.DEST, locale, 'messages.mo')
 
     def run(self, opts):
+        self.compile_content_server_translations()
         l = {}
         exec(compile(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lc_data.py'))
              .read(), os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lc_data.py'), 'exec'), l, l)
@@ -243,6 +258,25 @@ class Translations(POT):  # {{{
         self.write_stats()
         self.freeze_locales()
         self.compile_user_manual_translations()
+
+    def compile_content_server_translations(self):
+        self.info('\nCompiling content-server translations')
+        from calibre.utils.rapydscript import msgfmt
+        from calibre.utils.zipfile import ZipFile, ZIP_DEFLATED, ZipInfo
+        with ZipFile(self.j(self.RESOURCES, 'content-server', 'locales.zip'), 'w', ZIP_DEFLATED) as zf:
+            for src in glob.glob(os.path.join(self.TRANSLATIONS, 'content-server', '*.po')):
+                with open(src, 'rb') as f:
+                    po_data = f.read().decode('utf-8')
+                data = json.loads(msgfmt(po_data))
+                translated_entries = {k:v for k, v in data['entries'].iteritems() if v and sum(map(len, v))}
+                data['entries'] = translated_entries
+                if translated_entries:
+                    raw = json.dumps(data, ensure_ascii=False, sort_keys=True)
+                    if isinstance(raw, type(u'')):
+                        raw = raw.encode('utf-8')
+                    zi = ZipInfo(os.path.basename(src).rpartition('.')[0])
+                    zi.compress_type = ZIP_DEFLATED
+                    zf.writestr(zi, raw)
 
     def check_iso639(self, path):
         from calibre.utils.localization import langnames_to_langcodes
@@ -369,9 +403,39 @@ class GetTranslations(Translations):  # {{{
         self.tx('pull -a')
         if self.is_modified:
             self.check_for_errors()
+            self.check_for_user_manual_errors()
             self.upload_to_vcs()
         else:
             print ('No translations were updated')
+
+    def check_for_user_manual_errors(self):
+        self.info('Checking user manual translations...')
+        srcbase = self.j(self.d(self.SRC), 'translations', 'manual')
+        import polib
+        changes = defaultdict(set)
+        for lang in os.listdir(srcbase):
+            if lang.startswith('en_') or lang == 'en':
+                continue
+            q = self.j(srcbase, lang)
+            if not os.path.isdir(q):
+                continue
+            for po in os.listdir(q):
+                if not po.endswith('.po'):
+                    continue
+                f = polib.pofile(os.path.join(q, po))
+                changed = False
+                for entry in f.translated_entries():
+                    if '`generated/en/' in entry.msgstr:
+                        changed = True
+                        entry.msgstr = entry.msgstr.replace('`generated/en/', '`generated/' + lang + '/')
+                        bname = os.path.splitext(po)[0]
+                        slug = 'user_manual_' + bname
+                        changes[slug].add(lang)
+                if changed:
+                    f.save()
+        for slug, languages in changes.iteritems():
+            print('Pushing fixes for languages: %s in %s' % (', '.join(languages), slug))
+            self.tx('push -r calibre.%s -t -l %s' % (slug, ','.join(languages)))
 
     def check_for_errors(self):
         errors = os.path.join(tempfile.gettempdir(), 'calibre-translation-errors')

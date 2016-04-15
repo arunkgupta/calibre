@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -17,7 +17,7 @@ from calibre.ebooks.html_entities import html5_entities
 from calibre.ebooks.oeb.polish.pretty import pretty_script_or_style as fix_style_tag
 from calibre.ebooks.oeb.polish.utils import PositionFinder, guess_type
 from calibre.ebooks.oeb.polish.check.base import BaseError, WARN, ERROR, INFO
-from calibre.ebooks.oeb.base import OEB_DOCS, XHTML_NS, urlquote, URL_SAFE
+from calibre.ebooks.oeb.base import OEB_DOCS, XHTML_NS, urlquote, URL_SAFE, XHTML
 
 HTML_ENTITTIES = frozenset(html5_entities)
 XML_ENTITIES = {'lt', 'gt', 'amp', 'apos', 'quot'}
@@ -328,6 +328,67 @@ class DuplicateId(BaseError):
         container.dirty(self.name)
         return True
 
+class InvalidId(BaseError):
+
+    level = WARN
+    INDIVIDUAL_FIX = _(
+        'Replace this id with a randomly generated valid id')
+
+    def __init__(self, name, line, eid):
+        BaseError.__init__(self, _('Invalid id: %s') % eid, name, line)
+        self.HELP = _(
+            'The id {0} is not a valid id. IDs must start with a letter ([A-Za-z]) and may be'
+            ' followed by any number of letters, digits ([0-9]), hyphens ("-"), underscores ("_")'
+            ', colons (":"), and periods ("."). This is to ensure maximum compatibility'
+            ' with a wide range of devices.').format(eid)
+        self.invalid_id = eid
+
+    def __call__(self, container):
+        from calibre.ebooks.oeb.base import uuid_id
+        from calibre.ebooks.oeb.polish.replace import replace_ids
+        newid = uuid_id()
+        changed = False
+        elems = (e for e in container.parsed(self.name).xpath('//*[@id]') if e.get('id') == self.invalid_id)
+        for e in elems:
+            e.set('id', newid)
+            changed = True
+            container.dirty(self.name)
+        if changed:
+            replace_ids(container, {self.name:{self.invalid_id:newid}})
+        return changed
+
+class BareTextInBody(BaseError):
+
+    INDIVIDUAL_FIX = _('Wrap the bare text in a p tag')
+    HELP = _('You cannot have bare text inside the body tag. The text must be placed inside some other tag, such as p or div')
+    has_multiple_locations = True
+
+    def __init__(self, name, lines):
+        BaseError.__init__(self, _('Bare text in body tag'), name)
+        self.all_locations = [(name, l, None) for l in sorted(lines)]
+
+    def __call__(self, container):
+        root = container.parsed(self.name)
+        for body in root.xpath('//*[local-name() = "body"]'):
+            children = tuple(body.iterchildren('*'))
+            if body.text and body.text.strip():
+                p = body.makeelement(XHTML('p'))
+                p.text, body.text = body.text.strip(), '\n  '
+                p.tail = '\n'
+                if children:
+                    p.tail += '  '
+                body.insert(0, p)
+            for child in children:
+                if child.tail and child.tail.strip():
+                    p = body.makeelement(XHTML('p'))
+                    p.text, child.tail = child.tail.strip(), '\n  '
+                    p.tail = '\n'
+                    body.insert(body.index(child) + 1, p)
+                    if child is not children[-1]:
+                        p.tail += '  '
+        container.dirty(self.name)
+        return True
+
 class ErrorHandler(object):
 
     ' Replacement logger to get useful error/warning info out of cssutils during parsing '
@@ -384,6 +445,8 @@ def check_filenames(container):
             errors.append(EscapedName(name))
     return errors
 
+valid_id = re.compile(r'^[a-zA-Z][a-zA-Z0-9_:.-]*$')
+
 def check_ids(container):
     errors = []
     mts = set(OEB_DOCS) | {guess_type('a.opf'), guess_type('a.ncx')}
@@ -400,5 +463,23 @@ def check_ids(container):
                     dups[eid].append(elem.sourceline)
                 else:
                     seen_ids[eid] = elem.sourceline
+                if eid and valid_id.match(eid) is None:
+                    errors.append(InvalidId(name, elem.sourceline, eid))
             errors.extend(DuplicateId(name, eid, locs) for eid, locs in dups.iteritems())
+    return errors
+
+def check_markup(container):
+    errors = []
+    for name, mt in container.mime_map.iteritems():
+        if mt in OEB_DOCS:
+            lines = []
+            root = container.parsed(name)
+            for body in root.xpath('//*[local-name()="body"]'):
+                if body.text and body.text.strip():
+                    lines.append(body.sourceline)
+                for child in body.iterchildren('*'):
+                    if child.tail and child.tail.strip():
+                        lines.append(child.sourceline)
+            if lines:
+                errors.append(BareTextInBody(name, lines))
     return errors

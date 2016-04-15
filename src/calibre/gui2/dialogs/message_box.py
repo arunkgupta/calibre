@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -109,7 +109,7 @@ class MessageBox(QDialog):  # {{{
             if yes_icon is not None:
                 self.bb.button(self.bb.Yes).setIcon(yes_icon if isinstance(yes_icon, QIcon) else QIcon(I(yes_icon)))
             if no_icon is not None:
-                self.bb.button(self.bb.No).setIcon(yes_icon if isinstance(no_icon, QIcon) else QIcon(I(no_icon)))
+                self.bb.button(self.bb.No).setIcon(no_icon if isinstance(no_icon, QIcon) else QIcon(I(no_icon)))
         else:
             self.bb.button(self.bb.Ok).setDefault(True)
 
@@ -339,6 +339,9 @@ class JobError(QDialog):  # {{{
         self.ctc_button = self.bb.addButton(_('&Copy to clipboard'),
                 self.bb.ActionRole)
         self.ctc_button.clicked.connect(self.copy_to_clipboard)
+        self.retry_button = self.bb.addButton(_('&Retry'), self.bb.ActionRole)
+        self.retry_button.clicked.connect(self.retry)
+        self.retry_func = None
         self.show_det_msg = _('Show &details')
         self.hide_det_msg = _('Hide &details')
         self.det_msg_toggle = self.bb.addButton(self.show_det_msg, self.bb.ActionRole)
@@ -358,6 +361,11 @@ class JobError(QDialog):  # {{{
         self.suppress.setVisible(False)
         self.do_resize()
 
+    def retry(self):
+        if self.retry_func is not None:
+            self.accept()
+            self.retry_func()
+
     def update_suppress_state(self):
         self.suppress.setText(_(
             'Hide the remaining %d error messages'%len(self.queue)))
@@ -368,7 +376,7 @@ class JobError(QDialog):  # {{{
         d = QTextDocument()
         d.setHtml(self.msg_label.text())
         QApplication.clipboard().setText(
-                u'calibre, version %s (%s, isfrozen: %s)\n%s: %s\n\n%s' %
+                u'calibre, version %s (%s, embedded-python: %s)\n%s: %s\n\n%s' %
                 (__version__, sys.platform, isfrozen,
                     unicode(self.windowTitle()), unicode(d.toPlainText()),
                     unicode(self.det_msg.toPlainText())))
@@ -395,15 +403,15 @@ class JobError(QDialog):  # {{{
         self.bb.button(self.bb.Close).setFocus(Qt.OtherFocusReason)
         return ret
 
-    def show_error(self, title, msg, det_msg=u''):
-        self.queue.append((title, msg, det_msg))
+    def show_error(self, title, msg, det_msg=u'', retry_func=None):
+        self.queue.append((title, msg, det_msg, retry_func))
         self.update_suppress_state()
         self.pop()
 
     def pop(self):
         if not self.queue or self.isVisible():
             return
-        title, msg, det_msg = self.queue.pop(0)
+        title, msg, det_msg, retry_func = self.queue.pop(0)
         self.setWindowTitle(title)
         self.msg_label.setText(msg)
         self.det_msg.setPlainText(det_msg)
@@ -414,6 +422,8 @@ class JobError(QDialog):  # {{{
         self.update_suppress_state()
         if not det_msg:
             self.det_msg_toggle.setVisible(False)
+        self.retry_button.setVisible(retry_func is not None)
+        self.retry_func = retry_func
         self.do_resize()
         self.show()
 

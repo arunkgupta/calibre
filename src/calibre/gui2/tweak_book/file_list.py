@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -8,7 +8,7 @@ __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import os
 from binascii import hexlify
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict, defaultdict, Counter
 from functools import partial
 
 import sip
@@ -37,6 +37,14 @@ LINEAR_ROLE = CATEGORY_ROLE + 1
 MIME_ROLE = LINEAR_ROLE + 1
 NBSP = '\xa0'
 
+CATEGORIES = (
+    ('text', _('Text'), _('Chapter-')),
+    ('styles', _('Styles'), _('Style-')),
+    ('images', _('Images'), _('Image-')),
+    ('fonts', _('Fonts'), _('Font-')),
+    ('misc', _('Miscellaneous'), _('Misc-')),
+)
+
 def name_is_ok(name, show_error):
     if not name or not name.strip():
         return show_error('') and False
@@ -53,13 +61,14 @@ def name_is_ok(name, show_error):
     show_error('')
     return True
 
-def get_bulk_rename_settings(parent, number, msg=None, sanitize=sanitize_file_name_unicode, leading_zeros=True, prefix=None):  # {{{
+def get_bulk_rename_settings(parent, number, msg=None, sanitize=sanitize_file_name_unicode, leading_zeros=True, prefix=None, category='text'):  # {{{
     d = QDialog(parent)
     d.setWindowTitle(_('Bulk rename items'))
     d.l = l = QFormLayout(d)
     d.setLayout(l)
     d.prefix = p = QLineEdit(d)
-    p.setText(prefix or _('Chapter-'))
+    prefix = prefix or {k:v for k, __, v in CATEGORIES}.get(category, _('Chapter-'))
+    p.setText(prefix)
     p.selectAll()
     d.la = la = QLabel(msg or _(
         'All selected files will be renamed to the form prefix-number'))
@@ -99,7 +108,9 @@ class ItemDelegate(QStyledItemDelegate):  # {{{
         editor.setText(name)
         ext_pos = name.rfind('.')
         slash_pos = name.rfind('/')
-        if ext_pos > -1 and slash_pos > -1 and ext_pos > slash_pos + 1:
+        if slash_pos == -1 and ext_pos > 0:
+            editor.setSelection(0, ext_pos)
+        elif ext_pos > -1 and slash_pos > -1 and ext_pos > slash_pos + 1:
             editor.setSelection(slash_pos+1, ext_pos - slash_pos - 1)
         else:
             editor.selectAll()
@@ -155,6 +166,7 @@ class FileList(QTreeWidget):
 
     def __init__(self, parent=None):
         QTreeWidget.__init__(self, parent)
+        self.ordered_selected_indexes = False
         pi = plugins['progress_indicator'][0]
         if hasattr(pi, 'set_no_activate_on_click'):
             pi.set_no_activate_on_click(self)
@@ -254,13 +266,7 @@ class FileList(QTreeWidget):
         self.root = self.invisibleRootItem()
         self.root.setFlags(Qt.ItemIsDragEnabled)
         self.categories = {}
-        for category, text in (
-            ('text', _('Text')),
-            ('styles', _('Styles')),
-            ('images', _('Images')),
-            ('fonts', _('Fonts')),
-            ('misc', _('Miscellaneous')),
-        ):
+        for category, text, __ in CATEGORIES:
             self.categories[category] = i = QTreeWidgetItem(self.root, 0)
             i.setText(0, text)
             i.setData(0, Qt.DecorationRole, self.top_level_pixmap_cache[category])
@@ -477,6 +483,12 @@ class FileList(QTreeWidget):
             self.merge_requested.emit(category, names, d.ans)
 
     def edit_current_item(self):
+        if not current_container().SUPPORTS_FILENAMES:
+            error_dialog(self, _('Cannot rename'), _(
+                '%s books do not support file renaming as they do not use file names'
+                ' internally. The filenames you see are automatically generated from the'
+                ' internal structures of the original file.') % current_container().book_type.upper(), show=True)
+            return
         if self.currentItem() is not None:
             self.editItem(self.currentItem())
 
@@ -501,13 +513,20 @@ class FileList(QTreeWidget):
             return QTreeWidget.keyPressEvent(self, ev)
 
     def request_bulk_rename(self):
+        if not current_container().SUPPORTS_FILENAMES:
+            error_dialog(self, _('Cannot rename'), _(
+                '%s books do not support file renaming as they do not use file names'
+                ' internally. The filenames you see are automatically generated from the'
+                ' internal structures of the original file.') % current_container().book_type.upper(), show=True)
+            return
         names = {unicode(item.data(0, NAME_ROLE) or '') for item in self.selectedItems()}
         bad = names & current_container().names_that_must_not_be_changed
         if bad:
             return error_dialog(self, _('Cannot rename'),
                          _('The file(s) %s cannot be renamed.') % ('<b>%s</b>' % ', '.join(bad)), show=True)
         names = sorted(names, key=self.index_of_name)
-        fmt, num = get_bulk_rename_settings(self, len(names))
+        categories = Counter(unicode(item.data(0, CATEGORY_ROLE) or '') for item in self.selectedItems())
+        fmt, num = get_bulk_rename_settings(self, len(names), category=categories.most_common(1)[0][0])
         if fmt is not None:
             def change_name(name, num):
                 parts = name.split('/')
@@ -517,8 +536,14 @@ class FileList(QTreeWidget):
             name_map = {n:change_name(n, num + i) for i, n in enumerate(names)}
             self.bulk_rename_requested.emit(name_map)
 
+    @property
+    def selected_names(self):
+        ans = {unicode(item.data(0, NAME_ROLE) or '') for item in self.selectedItems()}
+        ans.discard('')
+        return ans
+
     def request_delete(self):
-        names = {unicode(item.data(0, NAME_ROLE) or '') for item in self.selectedItems()}
+        names = self.selected_names
         bad = names & current_container().names_that_must_not_be_removed
         if bad:
             return error_dialog(self, _('Cannot delete'),
@@ -556,23 +581,38 @@ class FileList(QTreeWidget):
             b.setValue(b.minimum())
             QTimer.singleShot(0, lambda : b.setValue(b.maximum()))
 
+    def __enter__(self):
+        self.ordered_selected_indexes = True
+
+    def __exit__(self, *args):
+        self.ordered_selected_indexes = False
+
+    def selectedIndexes(self):
+        ans = QTreeWidget.selectedIndexes(self)
+        if self.ordered_selected_indexes:
+            # The reverse is needed because Qt's implementation of dropEvent
+            # reverses the selectedIndexes when dropping.
+            ans = list(sorted(ans, key=lambda idx:idx.row(), reverse=True))
+        return ans
+
     def dropEvent(self, event):
-        text = self.categories['text']
-        pre_drop_order = {text.child(i):i for i in xrange(text.childCount())}
-        super(FileList, self).dropEvent(event)
-        current_order = {text.child(i):i for i in xrange(text.childCount())}
-        if current_order != pre_drop_order:
-            order = []
-            for child in (text.child(i) for i in xrange(text.childCount())):
-                name = unicode(child.data(0, NAME_ROLE) or '')
-                linear = bool(child.data(0, LINEAR_ROLE))
-                order.append([name, linear])
-            # Ensure that all non-linear items are at the end, any non-linear
-            # items not at the end will be made linear
-            for i, (name, linear) in tuple(enumerate(order)):
-                if not linear and i < len(order) - 1 and order[i+1][1]:
-                    order[i][1] = True
-            self.reorder_spine.emit(order)
+        with self:
+            text = self.categories['text']
+            pre_drop_order = {text.child(i):i for i in xrange(text.childCount())}
+            super(FileList, self).dropEvent(event)
+            current_order = {text.child(i):i for i in xrange(text.childCount())}
+            if current_order != pre_drop_order:
+                order = []
+                for child in (text.child(i) for i in xrange(text.childCount())):
+                    name = unicode(child.data(0, NAME_ROLE) or '')
+                    linear = bool(child.data(0, LINEAR_ROLE))
+                    order.append([name, linear])
+                # Ensure that all non-linear items are at the end, any non-linear
+                # items not at the end will be made linear
+                for i, (name, linear) in tuple(enumerate(order)):
+                    if not linear and i < len(order) - 1 and order[i+1][1]:
+                        order[i][1] = True
+                self.reorder_spine.emit(order)
 
     def item_double_clicked(self, item, column):
         category = unicode(item.data(0, CATEGORY_ROLE) or '')
@@ -823,4 +863,3 @@ class FileListWidget(QWidget):
         if name in self.forwarded_signals:
             return getattr(self.file_list, name)
         return QWidget.__getattr__(self, name)
-

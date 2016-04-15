@@ -3,7 +3,7 @@
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
 
-import os, glob, functools, re
+import os, glob, re
 from calibre import guess_type
 from calibre.customize import (FileTypePlugin, MetadataReaderPlugin,
     MetadataWriterPlugin, PreferencesPlugin, InterfaceActionBase, StoreBase)
@@ -143,14 +143,11 @@ class ComicMetadataReader(MetadataReaderPlugin):
             elif id_.startswith(b'PK'):
                 ftype = 'cbz'
         if ftype == 'cbr':
-            from calibre.utils.unrar import extract_first_alphabetically as extract_first
-            extract_first
+            from calibre.utils.unrar import extract_cover_image
         else:
-            from calibre.libunzip import extract_member
-            extract_first = functools.partial(extract_member,
-                    sort_alphabetically=True)
+            from calibre.libunzip import extract_cover_image
         from calibre.ebooks.metadata import MetaInformation
-        ret = extract_first(stream)
+        ret = extract_cover_image(stream)
         mi = MetaInformation(None, None)
         stream.seek(0)
         if ftype in {'cbr', 'cbz'}:
@@ -533,6 +530,17 @@ class TXTZMetadataWriter(MetadataWriterPlugin):
         from calibre.ebooks.metadata.extz import set_metadata
         set_metadata(stream, mi)
 
+class DocXMetadataWriter(MetadataWriterPlugin):
+
+    name        = 'Set DOCX metadata'
+    file_types  = set(['docx'])
+    description = _('Read metadata from %s files')%'DOCX'
+
+    def set_metadata(self, stream, mi, type):
+        from calibre.ebooks.metadata.docx import set_metadata
+        return set_metadata(stream, mi)
+
+
 plugins += [x for x in list(locals().values()) if isinstance(x, type) and
                                         x.__name__.endswith('MetadataWriter')]
 
@@ -579,6 +587,7 @@ from calibre.ebooks.conversion.plugins.txt_output import TXTOutput, TXTZOutput
 from calibre.ebooks.conversion.plugins.html_output import HTMLOutput
 from calibre.ebooks.conversion.plugins.htmlz_output import HTMLZOutput
 from calibre.ebooks.conversion.plugins.snb_output import SNBOutput
+from calibre.ebooks.conversion.plugins.docx_output import DOCXOutput
 
 plugins += [
     ComicInput,
@@ -606,6 +615,7 @@ plugins += [
 ]
 plugins += [
     EPUBOutput,
+    DOCXOutput,
     FB2Output,
     LITOutput,
     LRFOutput,
@@ -671,10 +681,9 @@ from calibre.devices.sne.driver import SNE
 from calibre.devices.misc import (
     PALMPRE, AVANT, SWEEX, PDNOVEL, GEMEI, VELOCITYMICRO, PDNOVEL_KOBO,
     LUMIREAD, ALURATEK_COLOR, TREKSTOR, EEEREADER, NEXTBOOK, ADAM, MOOVYBOOK,
-    COBY, EX124G, WAYTEQ, WOXTER, POCKETBOOK626)
+    COBY, EX124G, WAYTEQ, WOXTER, POCKETBOOK626, SONYDPTS1)
 from calibre.devices.folder_device.driver import FOLDER_DEVICE_FOR_CONFIG
 from calibre.devices.kobo.driver import KOBO, KOBOTOUCH
-from calibre.devices.bambook.driver import BAMBOOK
 from calibre.devices.boeye.driver import BOEYE_BEX, BOEYE_BDX
 from calibre.devices.smart_device_app.driver import SMART_DEVICE_APP
 from calibre.devices.mtp.driver import MTP_DEVICE
@@ -739,12 +748,11 @@ plugins += [
     PDNOVEL_KOBO,
     LUMIREAD,
     ALURATEK_COLOR,
-    BAMBOOK,
     TREKSTOR,
     EEEREADER,
     NEXTBOOK,
     ADAM,
-    MOOVYBOOK, COBY, EX124G, WAYTEQ, WOXTER, POCKETBOOK626,
+    MOOVYBOOK, COBY, EX124G, WAYTEQ, WOXTER, POCKETBOOK626, SONYDPTS1,
     ITUNES,
     BOEYE_BEX,
     BOEYE_BDX,
@@ -833,6 +841,11 @@ class ActionQuickview(InterfaceActionBase):
     name = 'Show Quickview'
     actual_plugin = 'calibre.gui2.actions.show_quickview:ShowQuickviewAction'
     description = _('Show a list of related books quickly')
+
+class ActionTagMapper(InterfaceActionBase):
+    name = 'Tag Mapper'
+    actual_plugin = 'calibre.gui2.actions.tag_mapper:TagMapAction'
+    description = _('Filter/transform the tags for books in the library')
 
 class ActionTemplateTester(InterfaceActionBase):
     name = 'Template Tester'
@@ -974,7 +987,7 @@ plugins += [ActionAdd, ActionFetchAnnotations, ActionGenerateCatalog,
         ActionAddToLibrary, ActionEditCollections, ActionMatchBooks, ActionChooseLibrary,
         ActionCopyToLibrary, ActionTweakEpub, ActionUnpackBook, ActionNextMatch, ActionStore,
         ActionPluginUpdater, ActionPickRandom, ActionEditToC, ActionSortBy,
-        ActionMarkBooks, ActionEmbed, ActionTemplateTester]
+        ActionMarkBooks, ActionEmbed, ActionTemplateTester, ActionTagMapper]
 
 # }}}
 
@@ -1017,7 +1030,7 @@ class Columns(PreferencesPlugin):
 class Toolbar(PreferencesPlugin):
     name = 'Toolbar'
     icon = I('wizard.png')
-    gui_name = _('Toolbar')
+    gui_name = _('Toolbars')
     category = 'Interface'
     gui_category = _('Interface')
     category_order = 1
@@ -1160,7 +1173,7 @@ class Server(PreferencesPlugin):
 
 class MetadataSources(PreferencesPlugin):
     name = 'Metadata download'
-    icon = I('metadata.png')
+    icon = I('download-metadata.png')
     gui_name = _('Metadata download')
     category = 'Sharing'
     gui_category = _('Sharing')
@@ -1242,7 +1255,7 @@ class StoreAmazonKindleStore(StoreBase):
 
     headquarters = 'US'
     formats = ['KINDLE']
-    affiliate = True
+    affiliate = False
 
 class StoreSonyStore(StoreBase):
     name = 'SONY Reader Store'
@@ -1260,65 +1273,77 @@ class StoreSonyAUStore(StoreSonyStore):
     actual_plugin = 'calibre.gui2.store.stores.sony_au_plugin:SonyStore'
     headquarters = 'AU'
 
+class StoreAmazonAUKindleStore(StoreBase):
+    name = 'Amazon AU Kindle'
+    author = u'Kovid Goyal'
+    description = u'Kindle books from Amazon.'
+    actual_plugin = 'calibre.gui2.store.stores.amazon_au_plugin:AmazonKindleStore'
+
+    headquarters = 'AU'
+    formats = ['KINDLE']
+
 class StoreAmazonCAKindleStore(StoreBase):
     name = 'Amazon CA Kindle'
-    author = u'Tomasz Długosz'
+    author = u'Kovid Goyal'
     description = u'Kindle books from Amazon.'
-    actual_plugin = 'calibre.gui2.store.stores.amazon_ca_plugin:AmazonCAKindleStore'
+    actual_plugin = 'calibre.gui2.store.stores.amazon_ca_plugin:AmazonKindleStore'
 
     headquarters = 'CA'
     formats = ['KINDLE']
-    # affiliate = True
+
+class StoreAmazonINKindleStore(StoreBase):
+    name = 'Amazon IN Kindle'
+    author = u'Kovid Goyal'
+    description = u'Kindle books from Amazon.'
+    actual_plugin = 'calibre.gui2.store.stores.amazon_in_plugin:AmazonKindleStore'
+
+    headquarters = 'IN'
+    formats = ['KINDLE']
 
 class StoreAmazonDEKindleStore(StoreBase):
     name = 'Amazon DE Kindle'
-    author = 'Charles Haley'
+    author = 'Kovid Goyal'
     description = u'Kindle Bücher von Amazon.'
-    actual_plugin = 'calibre.gui2.store.stores.amazon_de_plugin:AmazonDEKindleStore'
+    actual_plugin = 'calibre.gui2.store.stores.amazon_de_plugin:AmazonKindleStore'
 
     headquarters = 'DE'
     formats = ['KINDLE']
-    affiliate = True
 
 class StoreAmazonFRKindleStore(StoreBase):
     name = 'Amazon FR Kindle'
-    author = 'Charles Haley'
+    author = 'Kovid Goyal'
     description = u'Tous les ebooks Kindle'
-    actual_plugin = 'calibre.gui2.store.stores.amazon_fr_plugin:AmazonFRKindleStore'
+    actual_plugin = 'calibre.gui2.store.stores.amazon_fr_plugin:AmazonKindleStore'
 
     headquarters = 'FR'
     formats = ['KINDLE']
-    affiliate = True
 
 class StoreAmazonITKindleStore(StoreBase):
     name = 'Amazon IT Kindle'
-    author = 'Charles Haley'
+    author = 'Kovid Goyal'
     description = u'eBook Kindle a prezzi incredibili'
-    actual_plugin = 'calibre.gui2.store.stores.amazon_it_plugin:AmazonITKindleStore'
+    actual_plugin = 'calibre.gui2.store.stores.amazon_it_plugin:AmazonKindleStore'
 
     headquarters = 'IT'
     formats = ['KINDLE']
-    affiliate = True
 
 class StoreAmazonESKindleStore(StoreBase):
     name = 'Amazon ES Kindle'
-    author = 'Charles Haley'
+    author = 'Kovid Goyal'
     description = u'eBook Kindle en España'
-    actual_plugin = 'calibre.gui2.store.stores.amazon_es_plugin:AmazonESKindleStore'
+    actual_plugin = 'calibre.gui2.store.stores.amazon_es_plugin:AmazonKindleStore'
 
     headquarters = 'ES'
     formats = ['KINDLE']
-    affiliate = True
 
 class StoreAmazonUKKindleStore(StoreBase):
     name = 'Amazon UK Kindle'
-    author = 'Charles Haley'
+    author = 'Kovid Goyal'
     description = u'Kindle books from Amazon\'s UK web site. Also, includes French language ebooks.'
-    actual_plugin = 'calibre.gui2.store.stores.amazon_uk_plugin:AmazonUKKindleStore'
+    actual_plugin = 'calibre.gui2.store.stores.amazon_uk_plugin:AmazonKindleStore'
 
     headquarters = 'UK'
     formats = ['KINDLE']
-    affiliate = True
 
 class StoreArchiveOrgStore(StoreBase):
     name = 'Archive.org'
@@ -1471,6 +1496,7 @@ class StoreEmpikStore(StoreBase):
 
     headquarters = 'PL'
     formats = ['EPUB', 'MOBI', 'PDF']
+    affiliate = True
 
 class StoreFeedbooksStore(StoreBase):
     name = 'Feedbooks'
@@ -1723,7 +1749,9 @@ plugins += [
     StoreBubokPublishingStore,
     StoreBubokPortugalStore,
     StoreAmazonKindleStore,
+    StoreAmazonAUKindleStore,
     StoreAmazonCAKindleStore,
+    StoreAmazonINKindleStore,
     StoreAmazonDEKindleStore,
     StoreAmazonESKindleStore,
     StoreAmazonFRKindleStore,

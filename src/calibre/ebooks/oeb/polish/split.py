@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -377,8 +377,9 @@ def merge_html(container, names, master):
             if not isinstance(first_child, basestring):
                 break
         if isinstance(first_child, basestring):
-            # Empty document, ignore
-            continue
+            # body contained only text, no tags
+            first_child = body.makeelement(XHTML('p'))
+            first_child.text, children[0] = children[0], first_child
 
         amap = anchor_map[name]
         remove_name_attributes(root)
@@ -477,7 +478,7 @@ def merge(container, category, names, master):
     if len(names) < 2:
         raise AbortError('Must specify at least two files to be merged')
     if master not in names:
-        raise AbortError('The master file must be one of the files being merged')
+        raise AbortError('The master file (%s) must be one of the files being merged' % master)
 
     if category == 'text':
         merge_html(container, names, master)

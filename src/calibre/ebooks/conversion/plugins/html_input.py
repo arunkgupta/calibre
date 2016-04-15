@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -299,7 +299,7 @@ class HTMLInput(InputFormatPlugin):
             return (None, None)
         try:
             raw = open(link, 'rb').read().decode('utf-8', 'replace')
-            raw = self.oeb.css_preprocessor(raw, add_namespace=True)
+            raw = self.oeb.css_preprocessor(raw, add_namespace=False)
         except:
             self.log.exception('Failed to read CSS file: %r'%link)
             return (None, None)

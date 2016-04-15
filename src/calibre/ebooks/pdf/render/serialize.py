@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -377,9 +377,10 @@ class PDFStream(object):
             self.fill_opacities[opacity] = self.objects.add(op)
         self.current_page.set_opacity(self.fill_opacities[opacity])
 
-    def end_page(self):
-        pageref = self.current_page.end(self.objects, self.stream)
-        self.page_tree.obj.add_page(pageref)
+    def end_page(self, drop_page=False):
+        if not drop_page:
+            pageref = self.current_page.end(self.objects, self.stream)
+            self.page_tree.obj.add_page(pageref)
         self.current_page = Page(self.page_tree, compress=self.compress)
 
     def draw_glyph_run(self, transform, size, font_metrics, glyphs):

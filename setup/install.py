@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement
 
@@ -122,10 +122,14 @@ class Develop(Command):
             raise SystemExit(1)
 
         if os.geteuid() == 0:
+            # We drop privileges for security, regaining them when installing
+            # files. Also ensures that any config files created as a side
+            # effect of the build process are not owned by root.
             self.drop_privileges()
-            # Ensure any calibre config files are created as correct user
-            import calibre.utils.config as c
-            c
+
+        # Ensure any config files created as a side effect of importing calibre
+        # during the build process are in /tmp
+        os.environ['CALIBRE_CONFIG_DIRECTORY'] = os.environ.get('CALIBRE_CONFIG_DIRECTORY', '/tmp/calibre-install-config')
 
     def run(self, opts):
         self.manifest = []
@@ -141,13 +145,16 @@ class Develop(Command):
     def install_env_module(self):
         import distutils.sysconfig as s
         libdir = s.get_python_lib(prefix=self.opts.staging_root)
-        if os.path.exists(libdir):
+        try:
+            if not os.path.exists(libdir):
+                os.makedirs(libdir)
+        except EnvironmentError:
+            self.warn('Cannot install calibre environment module to: '+libdir)
+        else:
             path = os.path.join(libdir, 'init_calibre.py')
             self.info('Installing calibre environment module: '+path)
             with open(path, 'wb') as f:
                 f.write(HEADER.format(**self.template_args()))
-        else:
-            self.warn('Cannot install calibre environment module to: '+libdir)
 
     def install_files(self):
         pass
@@ -316,5 +323,18 @@ class Sdist(Command):
         if os.path.exists(self.DEST):
             os.remove(self.DEST)
 
+class Bootstrap(Command):
 
+    description = 'Bootstrap a fresh checkout of calibre from git to a state where it can be installed. Requires various development tools/libraries/headers'
+    TRANSLATIONS_REPO = 'https://github.com/kovidgoyal/calibre-translations.git'
+    sub_commands = 'cacerts build iso639 iso3166 translations gui resources'.split()
 
+    def pre_sub_commands(self, opts):
+        tdir = self.j(self.d(self.SRC), 'translations')
+        if os.path.exists(tdir):
+            subprocess.check_call(['git', 'pull'], cwd=tdir)
+        else:
+            subprocess.check_call(['git', 'clone', self.TRANSLATIONS_REPO, 'translations'], cwd=self.d(self.SRC))
+
+    def run(self, opts):
+        self.info('\n\nAll done! You should now be able to run "%s setup.py install" to install calibre' % sys.executable)

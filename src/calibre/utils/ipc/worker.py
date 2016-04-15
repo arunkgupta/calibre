@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement
 
@@ -42,9 +42,6 @@ PARALLEL_FUNCS = {
 
     'gui_catalog'     :
     ('calibre.gui2.convert.gui_conversion', 'gui_catalog', 'notification'),
-
-    'move_library'     :
-    ('calibre.library.move', 'move_library', 'notification'),
 
     'arbitrary' :
     ('calibre.utils.ipc.worker', 'arbitrary', None),
@@ -196,8 +193,14 @@ def main():
 
         notifier.queue.put(None)
 
-    sys.stdout.flush()
-    sys.stderr.flush()
+    try:
+        sys.stdout.flush()
+    except EnvironmentError:
+        pass  # Happens sometimes on OS X for GUI processes (EPIPE)
+    try:
+        sys.stderr.flush()
+    except EnvironmentError:
+        pass  # Happens sometimes on OS X for GUI processes (EPIPE)
     return 0
 
 

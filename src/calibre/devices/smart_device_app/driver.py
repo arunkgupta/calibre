@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -125,12 +125,12 @@ class ConnectionListener(Thread):
                         getattr(self.driver, 'listen_socket', None) is not None:
                 ans = select.select((self.driver.listen_socket,), (), (), 0)
                 if len(ans[0]) > 0:
-                    # timeout in 10 ms to detect rare case where the socket goes
+                    # timeout in 100 ms to detect rare case where the socket goes
                     # away between the select and the accept
                     try:
                         self.driver._debug('attempt to open device socket')
                         device_socket = None
-                        self.driver.listen_socket.settimeout(0.010)
+                        self.driver.listen_socket.settimeout(0.100)
                         device_socket, ign = eintr_retry_call(
                                 self.driver.listen_socket.accept)
                         set_socket_inherit(device_socket, False)
@@ -351,6 +351,7 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
         self.noop_counter = 0
         self.debug_start_time = time.time()
         self.debug_time = time.time()
+        self.is_connected = False
 
     def _debug(self, *args):
         # manual synchronization so we don't lose the calling method name
@@ -657,7 +658,7 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
     def _put_file(self, infile, lpath, book_metadata, this_book, total_books):
         close_ = False
         if not hasattr(infile, 'read'):
-            infile, close_ = open(infile, 'rb'), True
+            infile, close_ = lopen(infile, 'rb'), True
         infile.seek(0, os.SEEK_END)
         length = infile.tell()
         book_metadata.size = length
@@ -668,9 +669,14 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
                                'totalBooks': total_books,
                                'willStreamBooks': True,
                                'willStreamBinary' : True,
-                               'wantsSendOkToSendbook' : self.can_send_ok_to_sendbook},
+                               'wantsSendOkToSendbook' : self.can_send_ok_to_sendbook,
+                               'canSupportLpathChanges': True},
                           print_debug_info=False,
                           wait_for_response=self.can_send_ok_to_sendbook)
+
+        if self.can_send_ok_to_sendbook:
+            lpath = result.get('lpath', lpath)
+            book_metadata.lpath = lpath
         self._set_known_metadata(book_metadata)
         pos = 0
         failed = False
@@ -685,7 +691,7 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
         self.time = None
         if close_:
             infile.close()
-        return -1 if failed else length
+        return (-1, None) if failed else (length, lpath)
 
     def _get_smartdevice_option_number(self, opt_string):
         if opt_string == 'password':
@@ -777,7 +783,7 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
         try:
             count = 0
             if os.path.exists(cache_file_name):
-                with open(cache_file_name, mode='rb') as fd:
+                with lopen(cache_file_name, mode='rb') as fd:
                     while True:
                         rec_len = fd.readline()
                         if len(rec_len) != 8:
@@ -814,7 +820,7 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
             count = 0
             prefix = os.path.join(cache_dir(),
                         'wireless_device_' + self.device_uuid + '_metadata_cache')
-            with open(prefix + '.tmp', mode='wb') as fd:
+            with lopen(prefix + '.tmp', mode='wb') as fd:
                 for key,book in self.device_book_cache.iteritems():
                     if (now_ - book['last_used']).days > self.PURGE_CACHE_ENTRIES_DAYS:
                         purged += 1
@@ -907,7 +913,7 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
         from calibre.ebooks.metadata.meta import get_metadata
         from calibre.customize.ui import quick_metadata
         ext = temp_file_name.rpartition('.')[-1].lower()
-        with open(temp_file_name, 'rb') as stream:
+        with lopen(temp_file_name, 'rb') as stream:
             with quick_metadata:
                 return get_metadata(stream, stream_type=ext,
                         force_read_metadata=True,
@@ -1014,7 +1020,8 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
                     'timestampFormat': tweaks['gui_timestamp_display_format'],
                     'lastModifiedFormat': tweaks['gui_last_modified_display_format'],
                     'calibre_version': numeric_version,
-                    'canSupportUpdateBooks': True})
+                    'canSupportUpdateBooks': True,
+                    'canSupportLpathChanges': True})
             if opcode != 'OK':
                 # Something wrong with the return. Close the socket
                 # and continue.
@@ -1442,7 +1449,7 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
             if not hasattr(infile, 'read'):
                 infile = USBMS.normalize_path(infile)
             book = SDBook(self.PREFIX, lpath, other=mdata)
-            length = self._put_file(infile, lpath, book, i, len(files))
+            length, lpath = self._put_file(infile, lpath, book, i, len(files))
             if length < 0:
                 raise ControlError(desc='Sending book %s to device failed' % lpath)
             paths.append((lpath, length))
@@ -1595,7 +1602,7 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
                                              'for details'))
                     return (None, True)
 
-                cc_mtime = parse_date(book.get('_format_mtime_'), as_utc=False)
+                cc_mtime = parse_date(book.get('_format_mtime_'), as_utc=True)
                 self._debug(book.title, 'cal_mtime', calibre_mtime, 'cc_mtime', cc_mtime)
                 if cc_mtime < calibre_mtime:
                     book.set('_format_mtime_', isoformat(self.now))
@@ -1798,6 +1805,7 @@ class SMART_DEVICE_APP(DeviceConfig, DevicePlugin):
     @synchronous('sync_lock')
     def startup(self):
         self.listen_socket = None
+        self.is_connected = False
 
     @synchronous('sync_lock')
     def startup_on_demand(self):

@@ -7,7 +7,7 @@ calibre is completely open source, licensed under the `GNU GPL v3 <http://www.gn
 This means that you are free to download and modify the program to your heart's content. In this section,
 you will learn how to get a calibre development environment set up on the operating system of your choice.
 calibre is written primarily in `Python <https://www.python.org>`_ with some C/C++ code for speed and system interfacing.
-Note that calibre is not compatible with Python 3 and requires at least Python 2.7.
+Note that calibre is not compatible with Python 3 and requires at least Python 2.7.9.
 
 .. contents:: Contents
   :depth: 2
@@ -19,7 +19,7 @@ Design philosophy
 calibre has its roots in the Unix world, which means that its design is highly modular.
 The modules interact with each other via well defined interfaces. This makes adding new features and fixing
 bugs in calibre very easy, resulting in a frenetic pace of development. Because of its roots, calibre has a
-comprehensive command line interface for all its functions, documented in :doc:`generated/|lang|/cli-index`.
+comprehensive command line interface for all its functions, documented in :doc:`generated/en/cli-index`.
 
 The modular design of calibre is expressed via ``Plugins``. There is a :ref:`tutorial <customize>` on writing calibre plugins.
 For example, adding support for a new device to calibre typically involves writing less than a 100 lines of code in the form of
@@ -75,7 +75,7 @@ Getting the code
 ------------------
 
 You can get the calibre source code in two ways, using a version control system or
-directly downloading a `tarball <http://status.calibre-ebook.com/dist/src>`_.
+directly downloading a `tarball <https://calibre-ebook.com/dist/src>`_.
 
 calibre uses `Git <http://www.git-scm.com/>`_, a distributed version control
 system. Git is available on all the platforms calibre supports.  After
@@ -89,7 +89,7 @@ calibre is a very large project with a very long source control history, so the
 above can take a while (10 mins to an hour depending on your internet speed).
 
 If you want to get the code faster, the source code for the latest release is
-always available as an `archive <http://status.calibre-ebook.com/dist/src>`_.
+always available as an `archive <https://calibre-ebook.com/dist/src>`_.
 
 To update a branch to the latest code, use the command::
 
@@ -224,7 +224,7 @@ Linux development environment
 calibre is primarily developed on Linux. You have two choices in setting up the development environment. You can install the
 calibre binary as normal and use that as a runtime environment to do your development. This approach is similar to that
 used in Windows and OS X. Alternatively, you can install calibre from source. Instructions for setting up a development
-environment from source are in the INSTALL file in the source tree. Here we will address using the binary at runtime, which is the
+environment from source are in the INSTALL file in the source tree. Here we will address using the binary as a runtime, which is the
 recommended method.
 
 Install calibre using the binary installer. Then open a terminal and change to the previously checked out calibre code directory, for example::

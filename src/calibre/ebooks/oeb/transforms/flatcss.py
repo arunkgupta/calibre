@@ -62,6 +62,8 @@ class KeyMapper(object):
         endp = 0 if size < base else 36
         diff = (abs(base - size) * 3) + ((36 - size) / 100)
         logb = abs(base - endp)
+        if logb == 1.0:
+            logb = 1.1
         try:
             result = sign * math.log(diff, logb)
         except ValueError:
@@ -134,8 +136,13 @@ class EmbedFontsCSSRules(object):
 
 class CSSFlattener(object):
     def __init__(self, fbase=None, fkey=None, lineh=None, unfloat=False,
-                 untable=False, page_break_on_body=False, specializer=None):
+                 untable=False, page_break_on_body=False, specializer=None,
+                 transform_css_rules=()):
         self.fbase = fbase
+        self.transform_css_rules = transform_css_rules
+        if self.transform_css_rules:
+            from calibre.ebooks.css_transform_rules import compile_rules
+            self.transform_css_rules = compile_rules(self.transform_css_rules)
         self.fkey = fkey
         self.lineh = lineh
         self.unfloat = unfloat
@@ -192,11 +199,18 @@ class CSSFlattener(object):
         body_font_family = None
         if not family:
             return body_font_family, efi
-        from calibre.utils.fonts.scanner import font_scanner
+        from calibre.utils.fonts.scanner import font_scanner, NoFonts
         from calibre.utils.fonts.utils import panose_to_css_generic_family
-        faces = font_scanner.fonts_for_family(family)
+        try:
+            faces = font_scanner.fonts_for_family(family)
+        except NoFonts:
+            msg = (u'No embeddable fonts found for family: %r'%family)
+            if failure_critical:
+                raise ValueError(msg)
+            self.oeb.log.warn(msg)
+            return body_font_family, efi
         if not faces:
-            msg = (u'No embeddable fonts found for family: %r'%self.opts.embed_font_family)
+            msg = (u'No embeddable fonts found for family: %r'%family)
             if failure_critical:
                 raise ValueError(msg)
             self.oeb.log.warn(msg)
@@ -330,6 +344,20 @@ class CSSFlattener(object):
         if 'align' in node.attrib:
             if tag != 'img':
                 cssdict['text-align'] = node.attrib['align']
+                if cssdict['text-align'] == 'center':
+                    # align=center causes tables to be center aligned,
+                    # which text-align does not. And the ever trustworthy Word
+                    # uses this construct in its HTML output. See
+                    # https://bugs.launchpad.net/bugs/1569583
+                    if tag == 'table':
+                        if 'margin-left' not in cssdict and 'margin-right' not in cssdict:
+                            cssdict['margin-left'] = cssdict['margin-right'] = 'auto'
+                    else:
+                        for table in node.iterchildren(XHTML("table")):
+                            ts = stylizer.style(table)
+                            if ts.get('margin-left') is None and ts.get('margin-right') is None:
+                                ts.set('margin-left', 'auto')
+                                ts.set('margin-right', 'auto')
             else:
                 val = node.attrib['align']
                 if val in ('middle', 'bottom', 'top'):
@@ -514,10 +542,17 @@ class CSSFlattener(object):
     def flatten_head(self, item, href, global_href):
         html = item.data
         head = html.find(XHTML('head'))
+        def safe_lower(x):
+            try:
+                x = x.lower()
+            except Exception:
+                pass
+            return x
+
         for node in html.xpath('//*[local-name()="style" or local-name()="link"]'):
             if node.tag == XHTML('link') \
-               and node.get('rel', 'stylesheet') == 'stylesheet' \
-               and node.get('type', CSS_MIME) in OEB_STYLES:
+               and safe_lower(node.get('rel', 'stylesheet')) == 'stylesheet' \
+               and safe_lower(node.get('type', CSS_MIME)) in OEB_STYLES:
                 node.getparent().remove(node)
             elif node.tag == XHTML('style') \
                  and node.get('type', CSS_MIME) in OEB_STYLES:
@@ -538,8 +573,11 @@ class CSSFlattener(object):
             if item.media_type in OEB_STYLES:
                 manifest.remove(item)
         id, href = manifest.generate('css', 'stylesheet.css')
-        item = manifest.add(id, href, CSS_MIME, data=cssutils.parseString(css,
-            validate=False))
+        sheet = cssutils.parseString(css, validate=False)
+        if self.transform_css_rules:
+            from calibre.ebooks.css_transform_rules import transform_sheet
+            transform_sheet(self.transform_css_rules, sheet)
+        item = manifest.add(id, href, CSS_MIME, data=sheet)
         self.oeb.manifest.main_stylesheet = item
         return href
 
@@ -568,8 +606,11 @@ class CSSFlattener(object):
             href = None
             if css.strip():
                 id_, href = manifest.generate('page_css', 'page_styles.css')
-                manifest.add(id_, href, CSS_MIME, data=cssutils.parseString(css,
-                    validate=False))
+                sheet = cssutils.parseString(css, validate=False)
+                if self.transform_css_rules:
+                    from calibre.ebooks.css_transform_rules import transform_sheet
+                    transform_sheet(self.transform_css_rules, sheet)
+                manifest.add(id_, href, CSS_MIME, data=sheet)
             gc_map[css] = href
 
         ans = {}

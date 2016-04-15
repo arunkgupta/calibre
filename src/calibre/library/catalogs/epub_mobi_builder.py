@@ -7,8 +7,8 @@ import datetime, os, platform, re, shutil, time, unicodedata, zlib
 from copy import deepcopy
 from xml.sax.saxutils import escape
 
-from calibre import (prepare_string_for_xml, strftime, force_unicode,
-        isbytestring, replace_entities)
+from calibre import (
+    prepare_string_for_xml, strftime, force_unicode, isbytestring, replace_entities, as_unicode)
 from calibre.constants import isosx, cache_dir
 from calibre.customize.conversion import DummyReporter
 from calibre.customize.ui import output_profiles
@@ -4341,35 +4341,37 @@ class CatalogBuilder(object):
         cover_crc = hex(zlib.crc32(data))
 
         # Test cache for uuid
-        zf = _open_archive()
-        if zf is not None:
-            with zf:
-                try:
-                    zf.getinfo(title['uuid'] + cover_crc)
-                except:
-                    pass
-                else:
-                    # uuid found in cache with matching crc
-                    thumb_data = zf.read(title['uuid'] + cover_crc)
-                    with open(os.path.join(image_dir, thumb_file), 'wb') as f:
-                        f.write(thumb_data)
-                    return
-
-        # Save thumb for catalog. If invalid data, error returns to generate_thumbnails()
-        thumb_data = thumbnail(data,
-                width=self.thumb_width, height=self.thumb_height)[-1]
-        with open(os.path.join(image_dir, thumb_file), 'wb') as f:
-            f.write(thumb_data)
-
-        # Save thumb to archive
-        if zf is not None:
-            # Ensure that the read succeeded
-            # If we failed to open the zip file for reading,
-            # we dont know if it contained the thumb or not
-            zf = _open_archive('a')
+        uuid = title.get('uuid')
+        if uuid:
+            zf = _open_archive()
             if zf is not None:
                 with zf:
-                    zf.writestr(title['uuid'] + cover_crc, thumb_data)
+                    try:
+                        zf.getinfo(uuid + cover_crc)
+                    except:
+                        pass
+                    else:
+                        # uuid found in cache with matching crc
+                        thumb_data = zf.read(uuid + cover_crc)
+                        with open(os.path.join(image_dir, thumb_file), 'wb') as f:
+                            f.write(thumb_data)
+                        return
+
+            # Save thumb for catalog. If invalid data, error returns to generate_thumbnails()
+            thumb_data = thumbnail(data,
+                    width=self.thumb_width, height=self.thumb_height)[-1]
+            with open(os.path.join(image_dir, thumb_file), 'wb') as f:
+                f.write(thumb_data)
+
+            # Save thumb to archive
+            if zf is not None:
+                # Ensure that the read succeeded
+                # If we failed to open the zip file for reading,
+                # we dont know if it contained the thumb or not
+                zf = _open_archive('a')
+                if zf is not None:
+                    with zf:
+                        zf.writestr(uuid + cover_crc, thumb_data)
 
     def generate_thumbnails(self):
         """ Generate a thumbnail cover for each book.
@@ -4442,8 +4444,12 @@ class CatalogBuilder(object):
 
         # Write thumb_width to the file, validating cache contents
         # Allows detection of aborted catalog builds
-        with ZipFile(self.thumbs_path, mode='a') as zfw:
-            zfw.writestr('thumb_width', self.opts.thumb_width)
+        try:
+            with ZipFile(self.thumbs_path, mode='a') as zfw:
+                zfw.writestr('thumb_width', self.opts.thumb_width)
+        except Exception as err:
+            raise ValueError('There was an error writing to the thumbnail cache: %s\n'
+                             'Try deleting it. Underlying error: %s' % (force_unicode(self.thumbs_path), as_unicode(err)))
 
         self.thumbs = thumbs
 

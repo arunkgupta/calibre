@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -374,8 +374,8 @@ class ConfigProxy(object):
         return self.__config.get_option(key).help
 
 
-def _prefs():
-    c = Config('global', 'calibre wide preferences')
+def create_global_prefs(conf_obj=None):
+    c = Config('global', 'calibre wide preferences') if conf_obj is None else conf_obj
     c.add_opt('database_path',
               default=os.path.expanduser('~/library1.db'),
               help=_('Path to the database in which books are stored'))
@@ -392,7 +392,7 @@ def _prefs():
     c.add_opt('output_format', default='EPUB',
               help=_('The default output format for ebook conversions.'))
     c.add_opt('input_format_order', default=['EPUB', 'AZW3', 'MOBI', 'LIT', 'PRC',
-        'FB2', 'HTML', 'HTM', 'XHTM', 'SHTML', 'XHTML', 'ZIP', 'ODT', 'RTF', 'PDF',
+        'FB2', 'HTML', 'HTM', 'XHTM', 'SHTML', 'XHTML', 'ZIP', 'DOCX', 'ODT', 'RTF', 'PDF',
         'TXT'],
               help=_('Ordered list of formats to prefer for input.'))
     c.add_opt('read_file_metadata', default=True,
@@ -442,7 +442,7 @@ def _prefs():
     c.add_opt('migrated', default=False, help='For Internal use. Don\'t modify.')
     return c
 
-prefs = ConfigProxy(_prefs())
+prefs = ConfigProxy(create_global_prefs())
 if prefs['installation_uuid'] is None:
     import uuid
     prefs['installation_uuid'] = str(uuid.uuid4())

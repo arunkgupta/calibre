@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -23,8 +23,9 @@ from calibre.customize.ui import (
 from calibre.gui2 import error_dialog, question_dialog, info_dialog, open_url, gprefs
 from calibre.gui2.preferences.plugins import ConfigWidget
 from calibre.utils.date import UNDEFINED_DATE, format_date
+from calibre.utils.https import get_https_resource_securely
 
-SERVER = 'http://plugins.calibre-ebook.com/'
+SERVER = 'https://code.calibre-ebook.com/plugins/'
 INDEX_URL = '%splugins.json.bz2' % SERVER
 FILTER_ALL = 0
 FILTER_INSTALLED = 1
@@ -56,9 +57,8 @@ def filter_not_installed_plugins(display_plugin):
 def read_available_plugins(raise_error=False):
     import json, bz2
     display_plugins = []
-    br = browser()
     try:
-        raw = br.open_novisit(INDEX_URL).read()
+        raw = get_https_resource_securely(INDEX_URL)
         if not raw:
             return
         raw = json.loads(bz2.decompress(raw))
@@ -217,8 +217,7 @@ class DisplayPlugin(object):
         return filter_text in icu_lower(self.name)  # case-insensitive filtering
 
     def is_upgrade_available(self):
-        return self.is_installed() and (self.installed_version < self.available_version
-                or self.is_deprecated)
+        return self.is_installed() and (self.installed_version < self.available_version or self.is_deprecated)
 
     def is_valid_platform(self):
         if iswindows:
@@ -431,7 +430,14 @@ class PluginUpdaterDialog(SizePersistedDialog):
         self._initialize_controls()
         self._create_context_menu()
 
-        display_plugins = read_available_plugins()
+        try:
+            display_plugins = read_available_plugins(raise_error=True)
+        except Exception:
+            display_plugins = []
+            import traceback
+            error_dialog(self.gui, _('Update Check Failed'),
+                        _('Unable to reach the plugin index page.'),
+                        det_msg=traceback.format_exc(), show=True)
 
         if display_plugins:
             self.model = DisplayPluginModel(display_plugins)
@@ -444,9 +450,6 @@ class PluginUpdaterDialog(SizePersistedDialog):
             self.filter_combo.setCurrentIndex(initial_filter)
             self._select_and_focus_view()
         else:
-            error_dialog(self.gui, _('Update Check Failed'),
-                        _('Unable to reach the plugin index page.'),
-                        det_msg=INDEX_URL, show=True)
             self.filter_combo.setEnabled(False)
         # Cause our dialog size to be restored from prefs or created on first usage
         self.resize_dialog()
@@ -837,9 +840,7 @@ class PluginUpdaterDialog(SizePersistedDialog):
 
     def _download_zip(self, plugin_zip_url):
         from calibre.ptempfile import PersistentTemporaryFile
-        br = browser(user_agent='%s %s' % (__appname__, __version__))
-        raw = br.open_novisit(plugin_zip_url).read()
+        raw = get_https_resource_securely(plugin_zip_url, headers={'User-Agent':'%s %s' % (__appname__, __version__)})
         with PersistentTemporaryFile('.zip') as pt:
             pt.write(raw)
         return pt.name
-

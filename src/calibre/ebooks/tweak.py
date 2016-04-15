@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -70,6 +70,15 @@ def zip_rebuilder(tdir, path):
                 zfn = unicodedata.normalize('NFC', os.path.relpath(absfn, tdir).replace(os.sep, '/'))
                 zf.write(absfn, zfn)
 
+def docx_exploder(path, tdir, question=lambda x:True):
+    zipextract(path, tdir)
+    from calibre.ebooks.docx.dump import pretty_all_xml_in_dir
+    pretty_all_xml_in_dir(tdir)
+    for f in walk(tdir):
+        if os.path.basename(f) == 'document.xml':
+            return f
+    raise Error('Invalid book: Could not find document.xml')
+
 def get_tools(fmt):
     fmt = fmt.lower()
 
@@ -78,6 +87,8 @@ def get_tools(fmt):
         ans = mobi_exploder, rebuild
     elif fmt in {'epub', 'htmlz'}:
         ans = zip_exploder, zip_rebuilder
+    elif fmt == 'docx':
+        ans = docx_exploder, zip_rebuilder
     else:
         ans = None, None
 
@@ -88,7 +99,7 @@ def tweak(ebook_file):
     fmt = ebook_file.rpartition('.')[-1].lower()
     exploder, rebuilder = get_tools(fmt)
     if exploder is None:
-        prints('Cannot tweak %s files. Supported formats are: EPUB, HTMLZ, AZW3, MOBI'
+        prints('Cannot tweak %s files. Supported formats are: EPUB, HTMLZ, AZW3, MOBI' % fmt.upper()
                 , file=sys.stderr)
         raise SystemExit(1)
 

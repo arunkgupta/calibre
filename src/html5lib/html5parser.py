@@ -1,5 +1,4 @@
 from __future__ import absolute_import, division, unicode_literals
-from six import with_metaclass
 
 import types
 from collections import OrderedDict
@@ -12,11 +11,21 @@ from .treebuilders._base import Marker
 
 from . import utils
 from .constants import (
-    spaceCharacters, asciiUpper2Lower, specialElements, headingElements,
+    spaceCharacters, asciiUpper2Lower, specialElements, headingElements, E,
     cdataElements, rcdataElements, tokenTypes, tagTokenTypes, ReparseException, namespaces,
     htmlIntegrationPointElements, mathmlTextIntegrationPointElements,
     adjustForeignAttributes as adjustForeignAttributesMap, adjustSVGAttributes,
     adjustMathMLAttributes)
+
+try:
+    unicode
+    def with_metaclass(meta, *bases):
+        """Create a base class with a metaclass."""
+        return meta(b"NewBase", bases, {})
+except NameError:
+    def with_metaclass(meta, *bases):
+        """Create a base class with a metaclass."""
+        return meta("NewBase", bases, {})
 
 
 def parse(doc, treebuilder="etree", encoding=None,
@@ -132,13 +141,31 @@ class HTMLParser(object):
 
         self.framesetOK = True
 
+    @property
+    def documentEncoding(self):
+        """The name of the character encoding
+        that was used to decode the input stream,
+        or :obj:`None` if that is not determined yet.
+
+        """
+        if not hasattr(self, 'tokenizer'):
+            return None
+        return self.tokenizer.stream.charEncoding[0]
+
     def isHTMLIntegrationPoint(self, element):
         if (element.name == "annotation-xml" and
                 element.namespace == namespaces["mathml"]):
-            return ("encoding" in element.attributes and
-                    element.attributes["encoding"].translate(
-                        asciiUpper2Lower) in
-                    ("text/html", "application/xhtml+xml"))
+            try:
+                return ("encoding" in element.attributes and
+                        element.attributes["encoding"].translate(
+                            asciiUpper2Lower) in
+                        ("text/html", "application/xhtml+xml"))
+            except TypeError:
+                # This happens for some documents, for some reason
+                # lxml refuses to store a unicode representation of the
+                # encoding attribute.
+                return element.attributes["encoding"].lower().decode('utf-8', 'replace') in (
+                    "text/html", "application/xhtml+xml")
         else:
             return (element.namespace, element.name) in htmlIntegrationPointElements
 
@@ -195,8 +222,8 @@ class HTMLParser(object):
                     elif type == DoctypeToken:
                         new_token = phase.processDoctype(new_token)
 
-            if (type == StartTagToken and token["selfClosing"]
-                    and not token["selfClosingAcknowledged"]):
+            if (type == StartTagToken and token["selfClosing"] and
+                    not token["selfClosingAcknowledged"]):
                 self.parseError("non-void-element-with-trailing-solidus",
                                 {"name": token["name"]})
 
@@ -248,7 +275,7 @@ class HTMLParser(object):
         # XXX The idea is to make errorcode mandatory.
         self.errors.append((self.tokenizer.stream.position(), errorcode, datavars))
         if self.strict:
-            raise ParseError
+            raise ParseError(E[errorcode] % datavars)
 
     def normalizeToken(self, token):
         """ HTML5 specific normalizations to the token stream """
@@ -440,8 +467,8 @@ def getPhases(debug):
             if publicId != "":
                 publicId = publicId.translate(asciiUpper2Lower)
 
-            if (not correct or token["name"] != "html"
-                or publicId.startswith(
+            if (not correct or token["name"] != "html" or
+                    publicId.startswith(
                     ("+//silmaril//dtd html pro v0r11 19970101//",
                      "-//advasoft ltd//dtd html 3.0 aswedit + extensions//",
                      "-//as//dtd html 3.0 aswedit + extensions//",
@@ -496,21 +523,21 @@ def getPhases(debug):
                      "-//w3c//dtd w3 html//",
                      "-//w3o//dtd w3 html 3.0//",
                      "-//webtechs//dtd mozilla html 2.0//",
-                     "-//webtechs//dtd mozilla html//"))
-                or publicId in
+                     "-//webtechs//dtd mozilla html//")) or
+                     publicId in
                     ("-//w3o//dtd w3 html strict 3.0//en//",
                      "-/w3c/dtd html 4.0 transitional/en",
-                     "html")
-                or publicId.startswith(
+                     "html") or
+                    publicId.startswith(
                     ("-//w3c//dtd html 4.01 frameset//",
                      "-//w3c//dtd html 4.01 transitional//")) and
-                    systemId is None
-                    or systemId and systemId.lower() == "http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd"):
+                    systemId is None or
+                    systemId and systemId.lower() == "http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd"):
                 self.parser.compatMode = "quirks"
             elif (publicId.startswith(
                     ("-//w3c//dtd xhtml 1.0 frameset//",
-                     "-//w3c//dtd xhtml 1.0 transitional//"))
-                  or publicId.startswith(
+                     "-//w3c//dtd xhtml 1.0 transitional//")) or
+                  publicId.startswith(
                       ("-//w3c//dtd html 4.01 frameset//",
                        "-//w3c//dtd html 4.01 transitional//")) and
                   systemId is not None):
@@ -808,7 +835,7 @@ def getPhases(debug):
             self.startTagHandler = utils.MethodDispatcher([
                 ("html", self.startTagHtml),
                 (("base", "basefont", "bgsound", "command", "link", "meta",
-                  "noframes", "script", "style", "title"),
+                  "script", "style", "title"),
                  self.startTagProcessInHead),
                 ("body", self.startTagBody),
                 ("frameset", self.startTagFrameset),
@@ -907,8 +934,8 @@ def getPhases(debug):
             data = token["data"]
             self.processSpaceCharacters = self.processSpaceCharactersNonPre
             if (data.startswith("\n") and
-                self.tree.openElements[-1].name in ("pre", "listing", "textarea")
-                    and not self.tree.openElements[-1].hasContent()):
+                self.tree.openElements[-1].name in ("pre", "listing", "textarea") and
+                    not self.tree.openElements[-1].hasContent()):
                 data = data[1:]
             if data:
                 self.tree.reconstructActiveFormattingElements()
@@ -935,8 +962,8 @@ def getPhases(debug):
 
         def startTagBody(self, token):
             self.parser.parseError("unexpected-start-tag", {"name": "body"})
-            if (len(self.tree.openElements) == 1
-                    or self.tree.openElements[1].name != "body"):
+            if (len(self.tree.openElements) == 1 or
+                    self.tree.openElements[1].name != "body"):
                 assert self.parser.innerHTML
             else:
                 self.parser.framesetOK = False
@@ -1134,8 +1161,7 @@ def getPhases(debug):
             attributes["name"] = "isindex"
             self.processStartTag(self.impliedTagToken("input", "StartTag",
                                                  attributes=attributes,
-                                                 selfClosing=
-                                                 token["selfClosing"]))
+                                                 selfClosing=token["selfClosing"]))
             self.processEndTag(self.impliedTagToken("label"))
             self.processStartTag(self.impliedTagToken("hr", "StartTag"))
             self.processEndTag(self.impliedTagToken("form"))

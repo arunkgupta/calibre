@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -761,7 +761,7 @@ class PRST1(USBMS):
         if not os.path.exists(thumbnail_dir_path):
             os.makedirs(thumbnail_dir_path)
 
-        with open(thumbnail_file_path, 'wb') as f:
+        with lopen(thumbnail_file_path, 'wb') as f:
             f.write(book.thumbnail[-1])
             fsync(f)
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -233,7 +233,7 @@ class Comments(Base):
         self._box = QGroupBox(parent)
         self._box.setTitle('&'+self.col_metadata['name'])
         self._layout = QVBoxLayout()
-        self._tb = CommentsEditor(self._box)
+        self._tb = CommentsEditor(self._box, toolbar_prefs_name=u'metadata-comments-editor-widget-hidden-toolbars')
         self._tb.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         # self._tb.setTabChangesFocus(True)
         self._layout.addWidget(self._tb)
@@ -253,6 +253,14 @@ class Comments(Base):
         if not val:
             val = None
         return val
+
+    @dynamic_property
+    def tab(self):
+        def fget(self):
+            return self._tb.tab
+        def fset(self, val):
+            self._tb.tab = val
+        return property(fget=fget, fset=fset)
 
 class MultipleWidget(QWidget):
 
@@ -317,8 +325,8 @@ class Text(Base):
             if self.sep['ui_to_list'] == '&':
                 w.set_space_before_sep(True)
                 w.set_add_separator(tweaks['authors_completer_append_separator'])
-            w.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
             w.get_editor_button().clicked.connect(self.edit)
+            w.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
         else:
             w = EditWithComplete(parent)
             w.set_separator(None)
@@ -341,7 +349,7 @@ class Text(Base):
         if self.col_metadata['is_multiple']:
             self.setter(val)
         else:
-            self.widgets[1].show_initial_value(val)
+            self.widgets[1].setText(val)
         self.initial_val = self.current_val
 
     def setter(self, val):
@@ -420,7 +428,7 @@ class Series(Base):
         val = self.normalize_db_val(val)
         self.name_widget.blockSignals(True)
         self.name_widget.update_items_cache(values)
-        self.name_widget.show_initial_value(val)
+        self.name_widget.setText(val)
         self.name_widget.blockSignals(False)
         self.initial_val, self.initial_index = self.current_val
 
@@ -1038,9 +1046,11 @@ class BulkText(BulkBase):
         if not self.col_metadata['is_multiple']:
             val = self.get_initial_value(book_ids)
             self.initial_val = val = self.normalize_db_val(val)
+            self.ignore_change_signals = True
             self.main_widget.blockSignals(True)
-            self.main_widget.show_initial_value(val)
+            self.main_widget.setText(val)
             self.main_widget.blockSignals(False)
+            self.ignore_change_signals = False
 
     def commit(self, book_ids, notify=False):
         if not self.a_c_checkbox.isChecked():

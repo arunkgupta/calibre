@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import absolute_import
 
@@ -81,6 +81,9 @@ def get_lang():
         lang = 'en'
     return lang
 
+def is_rtl():
+    return get_lang()[:2].lower() in {'he', 'ar'}
+
 def get_lc_messages_path(lang):
     hlang = None
     if zf_exists():
@@ -107,6 +110,30 @@ def get_all_translators():
                 buf = cStringIO.StringIO(zf.read(mpath + '/messages.mo'))
                 yield lang, GNUTranslations(buf)
 
+def get_single_translator(mpath):
+    from zipfile import ZipFile
+    with ZipFile(P('localization/locales.zip', allow_user_override=False), 'r') as zf:
+        buf = cStringIO.StringIO(zf.read(mpath + '/messages.mo'))
+        return GNUTranslations(buf)
+
+def get_translator(bcp_47_code):
+    parts = bcp_47_code.replace('-', '_').split('_')[:2]
+    parts[0] = lang_as_iso639_1(parts[0].lower()) or 'en'
+    if len(parts) > 1:
+        parts[1] = parts[1].upper()
+    lang = '_'.join(parts)
+    lang = {'pt':'pt_BR', 'zh':'zh_CN'}.get(lang, lang)
+    available = available_translations()
+    found = True
+    if lang not in available:
+        lang = {'pt':'pt_BR', 'zh':'zh_CN'}.get(parts[0], parts[0])
+        if lang not in available:
+            lang = get_lang()
+            found = False
+    if lang == 'en':
+        return found, lang, NullTranslations()
+    return found, lang, get_single_translator(lang)
+
 lcdata = {
     u'abday': (u'Sun', u'Mon', u'Tue', u'Wed', u'Thu', u'Fri', u'Sat'),
     u'abmon': (u'Jan', u'Feb', u'Mar', u'Apr', u'May', u'Jun', u'Jul', u'Aug', u'Sep', u'Oct', u'Nov', u'Dec'),
@@ -122,27 +149,33 @@ lcdata = {
     u'yesexpr': u'^[yY].*'
 }
 
+def load_po(path):
+    from calibre.translations.msgfmt import make
+    buf = cStringIO.StringIO()
+    try:
+        make(path, buf)
+    except Exception:
+        print (('Failed to compile translations file: %s, ignoring') % path)
+        buf = None
+    else:
+        buf = cStringIO.StringIO(buf.getvalue())
+    return buf
+
+
 def set_translators():
     global _lang_trans, lcdata
     # To test different translations invoke as
     # CALIBRE_OVERRIDE_LANG=de_DE.utf8 program
     lang = get_lang()
-    t = None
+    t = buf = iso639 = None
+
+    if 'CALIBRE_TEST_TRANSLATION' in os.environ:
+        buf = load_po(os.path.expanduser(os.environ['CALIBRE_TEST_TRANSLATION']))
 
     if lang:
-        buf = iso639 = None
         mpath = get_lc_messages_path(lang)
-        if mpath and os.access(mpath+'.po', os.R_OK):
-            from calibre.translations.msgfmt import make
-            buf = cStringIO.StringIO()
-            try:
-                make(mpath+'.po', buf)
-            except:
-                print (('Failed to compile translations file: %s,'
-                        ' ignoring')%(mpath+'.po'))
-                buf = None
-            else:
-                buf = cStringIO.StringIO(buf.getvalue())
+        if buf is None and mpath and os.access(mpath + '.po', os.R_OK):
+            buf = load_po(mpath + '.po')
 
         if mpath is not None:
             from zipfile import ZipFile
@@ -163,11 +196,11 @@ def set_translators():
                     except:
                         pass  # No lcdata
 
-        if buf is not None:
-            t = GNUTranslations(buf)
-            if iso639 is not None:
-                iso639 = _lang_trans = GNUTranslations(iso639)
-                t.add_fallback(iso639)
+    if buf is not None:
+        t = GNUTranslations(buf)
+        if iso639 is not None:
+            iso639 = _lang_trans = GNUTranslations(iso639)
+            t.add_fallback(iso639)
 
     if t is None:
         t = NullTranslations()

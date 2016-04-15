@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -67,6 +67,7 @@ class Polish(QDialog):  # {{{
             'jacket':_('<h3>Book Jacket</h3>%s')%HELP['jacket'],
             'remove_jacket':_('<h3>Remove Book Jacket</h3>%s')%HELP['remove_jacket'],
             'remove_unused_css':_('<h3>Remove unused CSS rules</h3>%s')%HELP['remove_unused_css'],
+            'compress_images': _('<h3>Losslessly compress images</h3>%s') % HELP['compress_images'],
         }
 
         self.l = l = QGridLayout()
@@ -85,6 +86,7 @@ class Polish(QDialog):  # {{{
             ('jacket', _('Add/Replace metadata as a "book &jacket" page')),
             ('remove_jacket', _('&Remove a previously inserted book jacket')),
             ('remove_unused_css', _('Remove &unused CSS rules from the book')),
+            ('compress_images', _('Losslessly compress images')),
         ])
         prefs = gprefs.get('polishing_settings', {})
         for name, text in self.all_actions.iteritems():
@@ -217,6 +219,12 @@ class Polish(QDialog):  # {{{
                 return
             ac['metadata'] = saved_prefs['metadata'] = True
             self.opt_metadata.setChecked(True)
+        if ac['jacket'] and ac['remove_jacket']:
+            if not question_dialog(self, _('Add or remove jacket?'), _(
+                    'You have chosen to both add and remove the metadata jacket.'
+                    ' This will result in the final book having no jacket. Is this'
+                    ' what you want?')):
+                return
         if not something:
             return error_dialog(self, _('No actions selected'),
                 _('You must select at least one action, or click Cancel.'),

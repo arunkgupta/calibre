@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -9,7 +9,11 @@ __copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
 import os
 from collections import defaultdict
 from urlparse import urlparse
+from future_builtins import map
+from threading import Thread
+from Queue import Queue, Empty
 
+from calibre import browser
 from calibre.ebooks.oeb.base import OEB_DOCS, OEB_STYLES
 from calibre.ebooks.oeb.polish.container import OEB_FONTS
 from calibre.ebooks.oeb.polish.utils import guess_type, actual_case_for_name, corrected_case_for_name
@@ -86,6 +90,10 @@ class LocalLink(BadLink):
              ' book is read on any computer other than the one it was created on.'
              ' Either fix or remove the link.')
 
+class EmptyLink(BadLink):
+
+    HELP = _('This link is empty. This is almost always a mistake. Either fill in the link destination or remove the link tag.')
+
 class UnreferencedResource(BadLink):
 
     HELP = _('This file is included in the book but not referred to by any document in the spine.'
@@ -100,6 +108,20 @@ class UnreferencedDoc(UnreferencedResource):
 
     HELP = _('This file is not in the book spine. All content documents must be in the spine.'
              ' You should probably add it to the spine.')
+    INDIVIDUAL_FIX = _('Append this file to the spine')
+
+    def __call__(self, container):
+        from calibre.ebooks.oeb.base import OPF
+        rmap = {v:k for k, v in container.manifest_id_map.iteritems()}
+        if self.name in rmap:
+            manifest_id = rmap[self.name]
+        else:
+            manifest_id = container.add_name_to_manifest(self.name)
+        spine = container.opf_xpath('//opf:spine')[0]
+        si = spine.makeelement(OPF('itemref'), idref=manifest_id)
+        container.insert_into_xml(spine, si)
+        container.dirty(container.opf_name)
+        return True
 
 class Unmanifested(BadLink):
 
@@ -121,14 +143,17 @@ class Unmanifested(BadLink):
         if self.file_action == 'remove':
             container.remove_item(self.name)
         else:
-            container.add_name_to_manifest(self.name)
+            rmap = {v:k for k, v in container.manifest_id_map.iteritems()}
+            if self.name not in rmap:
+                container.add_name_to_manifest(self.name)
+        return True
 
 class Bookmarks(BadLink):
 
     HELP = _(
         'This file stores the bookmarks and last opened information from'
         ' the calibre ebook viewer. You can remove it if you do not'
-        ' need that information, or dont want to share it with'
+        ' need that information, or don\'t want to share it with'
         ' other people you send this book to.')
     INDIVIDUAL_FIX = _('Remove this file')
     level = INFO
@@ -196,10 +221,13 @@ def check_mimetypes(container):
     return errors
 
 def check_link_destination(container, dest_map, name, href, a, errors):
-    try:
-        tname = container.href_to_name(href, name)
-    except ValueError:
-        tname = None  # Absolute links to files on another drive in windows cause this
+    if href.startswith('#'):
+        tname = name
+    else:
+        try:
+            tname = container.href_to_name(href, name)
+        except ValueError:
+            tname = None  # Absolute links to files on another drive in windows cause this
     if tname and tname in container.mime_map:
         if container.mime_map[tname] not in OEB_DOCS:
             errors.append(BadDestinationType(name, tname, a))
@@ -254,6 +282,8 @@ def check_links(container):
     for name, mt in container.mime_map.iteritems():
         if mt in OEB_DOCS or mt in OEB_STYLES or mt in xml_types:
             for href, lnum, col in container.iterlinks(name):
+                if not href:
+                    a(EmptyLink(_('The link is empty'), name, lnum, col))
                 try:
                     tname = container.href_to_name(href, name)
                 except ValueError:
@@ -316,3 +346,45 @@ def check_links(container):
             a(Bookmarks(name))
 
     return errors
+
+def check_external_links(container, progress_callback=lambda num, total:None):
+    progress_callback(0, 0)
+    external_links = defaultdict(list)
+    for name, mt in container.mime_map.iteritems():
+        if mt in OEB_DOCS or mt in OEB_STYLES:
+            for href, lnum, col in container.iterlinks(name):
+                purl = urlparse(href)
+                if purl.scheme in ('http', 'https'):
+                    key = href.partition('#')[0]
+                    external_links[key].append((name, href, lnum, col))
+    if not external_links:
+        return []
+    items = Queue()
+    ans = []
+    tuple(map(items.put, external_links.iteritems()))
+    progress_callback(0, len(external_links))
+    done = []
+
+    def check_links():
+        br = browser(honor_time=False, verify_ssl_certificates=False)
+        while True:
+            try:
+                href, locations = items.get_nowait()
+            except Empty:
+                return
+            try:
+                br.open(href, timeout=10).close()
+            except Exception as e:
+                ans.append((locations, e, href))
+            finally:
+                done.append(None)
+                progress_callback(len(done), len(external_links))
+
+    workers = [Thread(name="CheckLinks", target=check_links) for i in xrange(min(10, len(external_links)))]
+    for w in workers:
+        w.daemon = True
+        w.start()
+
+    for w in workers:
+        w.join()
+    return ans

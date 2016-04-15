@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -20,7 +20,7 @@ class SlideFlip(QWidget):
         self.setGeometry(0, 0, 1, 1)
         self._current_width = 0
         self.before_image = self.after_image = None
-        self.animation = QPropertyAnimation(self, 'current_width', self)
+        self.animation = QPropertyAnimation(self, b'current_width', self)
         self.setVisible(False)
         self.animation.valueChanged.connect(self.update)
         self.animation.finished.connect(self.finished)

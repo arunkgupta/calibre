@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -339,6 +339,13 @@ class LineEdit(QLineEdit, LineEditECM):
             self.mcompleter.disable_popup = bool(val)
         return property(fget=fget, fset=fset)
     # }}}
+
+    def event(self, ev):
+        # See https://bugreports.qt.io/browse/QTBUG-46911
+        if ev.type() == ev.ShortcutOverride and (
+                ev.key() in (Qt.Key_Left, Qt.Key_Right) and (ev.modifiers() & ~Qt.KeypadModifier) == Qt.ControlModifier):
+            ev.accept()
+        return QLineEdit.event(self, ev)
 
     def complete(self, show_all=False, select_first=True):
         orig = None

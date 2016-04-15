@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -13,8 +13,6 @@ from calibre.gui2.actions import InterfaceAction
 from calibre.utils.smtp import config as email_config
 from calibre.utils.config import tweaks
 from calibre.constants import iswindows, isosx, get_osx_version
-from calibre.customize.ui import is_disabled
-from calibre.devices.bambook.driver import BAMBOOK
 from calibre.gui2.dialogs.smartdevice import SmartdeviceDialog
 from calibre.gui2 import info_dialog, question_dialog
 from calibre.library.server import server_config as content_server_config
@@ -23,7 +21,6 @@ class ShareConnMenu(QMenu):  # {{{
 
     connect_to_folder = pyqtSignal()
     connect_to_itunes = pyqtSignal()
-    connect_to_bambook = pyqtSignal()
 
     config_email = pyqtSignal()
     toggle_server = pyqtSignal()
@@ -46,16 +43,6 @@ class ShareConnMenu(QMenu):  # {{{
         self.connect_to_itunes_action = mitem
         itunes_ok = iswindows or (isosx and get_osx_version() < (10, 9, 0))
         mitem.setVisible(itunes_ok)
-        mitem = self.addAction(QIcon(I('devices/bambook.png')), _('Connect to Bambook'))
-        mitem.setEnabled(True)
-        mitem.triggered.connect(lambda x : self.connect_to_bambook.emit())
-        self.connect_to_bambook_action = mitem
-        bambook_visible = False
-        if not is_disabled(BAMBOOK):
-            device_ip = BAMBOOK.settings().extra_customization
-            if device_ip:
-                bambook_visible = True
-        self.connect_to_bambook_action.setVisible(bambook_visible)
 
         self.addSeparator()
         self.toggle_server_action = \
@@ -76,7 +63,7 @@ class ShareConnMenu(QMenu):  # {{{
             r = parent.keyboard.register_shortcut
             prefix = 'Share/Connect Menu '
             gr = ConnectShareAction.action_spec[0]
-            for attr in ('folder', 'bambook', 'itunes'):
+            for attr in ('folder', 'itunes'):
                 if not (iswindows or isosx) and attr == 'itunes':
                     continue
                 ac = getattr(self, 'connect_to_%s_action'%attr)
@@ -149,7 +136,7 @@ class ShareConnMenu(QMenu):  # {{{
                     _('Email to selected recipients...'))
             self.addAction(tac1)
             tac1.a_s.connect(sync_menu.action_triggered)
-            self.memory.append(tac1)
+            self.memory.append(tac1), self.email_actions.append(tac1)
             ac = self.addMenu(self.email_to_and_delete_menu)
             self.email_actions.append(ac)
             action1.a_s.connect(sync_menu.action_triggered)
@@ -165,7 +152,6 @@ class ShareConnMenu(QMenu):  # {{{
     def set_state(self, device_connected, device):
         self.connect_to_folder_action.setEnabled(not device_connected)
         self.connect_to_itunes_action.setEnabled(not device_connected)
-        self.connect_to_bambook_action.setEnabled(not device_connected)
 
 
 # }}}
@@ -206,7 +192,6 @@ class ConnectShareAction(InterfaceAction):
         self.qaction.setMenu(self.share_conn_menu)
         self.share_conn_menu.connect_to_folder.connect(self.gui.connect_to_folder)
         self.share_conn_menu.connect_to_itunes.connect(self.gui.connect_to_itunes)
-        self.share_conn_menu.connect_to_bambook.connect(self.gui.connect_to_bambook)
 
     def location_selected(self, loc):
         enabled = loc == 'library'
@@ -235,12 +220,11 @@ class ConnectShareAction(InterfaceAction):
                     _('Stopping server, this could take upto a minute, please wait...'),
                     show_copy_button=False)
             QTimer.singleShot(1000, self.check_exited)
+            self.stopping_msg.exec_()
 
     def check_exited(self):
-        if self.gui.content_server.is_running:
-            QTimer.singleShot(20, self.check_exited)
-            if not self.stopping_msg.isVisible():
-                self.stopping_msg.exec_()
+        if getattr(self.gui.content_server, 'is_running', False):
+            QTimer.singleShot(50, self.check_exited)
             return
         self.gui.content_server = None
         self.stopping_msg.accept()

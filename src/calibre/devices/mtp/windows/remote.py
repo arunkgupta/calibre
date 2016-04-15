@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -58,14 +58,14 @@ def main():
     # run()
     # return
 
-    from calibre.devices.scanner import win_scanner
+    from calibre.devices.winusb import scan_usb_devices
     from calibre.devices.mtp.driver import MTP_DEVICE
     dev = MTP_DEVICE(None)
     dev.startup()
     print (dev.wpd, dev.wpd_error)
 
     try:
-        devices = win_scanner()
+        devices = scan_usb_devices()
         pnp_id = dev.detect_managed_devices(devices)
         if not pnp_id:
             raise ValueError('Failed to detect device')

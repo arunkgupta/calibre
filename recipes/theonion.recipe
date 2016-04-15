@@ -22,6 +22,7 @@ class TheOnion(BasicNewsRecipe):
     publication_type      = 'newsportal'
     needs_subscription    = 'optional'
     masthead_url          = 'http://www.theonion.com/static/onion/img/logo_1x.png'
+    cover_url             = 'http://www.theonion.com/static/onion/img/logo_1x.png'
     extra_css             = """
                                 body{font-family: Helvetica,Arial,sans-serif}
                                 .section_title{color: gray; text-transform: uppercase}
@@ -38,17 +39,19 @@ class TheOnion(BasicNewsRecipe):
                         , 'language' : language
                         }
 
-    keep_only_tags    = [dict(attrs={'class':'full-article'})]
+    keep_only_tags    = [dict(attrs={'class':lambda x: x and 'content-wrapper' in x.split()})]
     remove_attributes = ['lang','rel']
     remove_tags       = [
-                         dict(name=['object','link','iframe','base','meta'])
+                         dict(name=['object','link','iframe','base','meta','button','footer','blockquote','figcaption'])
                         ,dict(attrs={'class':lambda x: x and 'share-tools' in x.split()})
+                        ,dict(attrs={'class':lambda x: x and 'content-meta' in x.split()})
+                        ,dict(attrs={'class':'below-article-tools'})
+                        ,dict(name='div', attrs={'id':['topshare', 'bottomshare']})
                         ]
 
-
     feeds = [
-              (u'Daily'  , u'http://feeds.theonion.com/theonion/daily' )
-             ,(u'Sports' , u'http://feeds.theonion.com/theonion/sports' )
+              (u'Daily'  , u'http://feeds.theonion.com/theonion/daily')
+             ,(u'Sports' , u'http://feeds.theonion.com/theonion/sports')
             ]
 
     def get_browser(self):
@@ -61,11 +64,11 @@ class TheOnion(BasicNewsRecipe):
             br['j_password'] = self.password
             br.submit()
         return br
-        
+
     def get_article_url(self, article):
         artl = BasicNewsRecipe.get_article_url(self, article)
         if artl.startswith('http://www.theonion.com/audio/'):
-           artl = None
+            artl = None
         return artl
 
     def preprocess_html(self, soup):
@@ -74,19 +77,18 @@ class TheOnion(BasicNewsRecipe):
         for item in soup.findAll('a'):
             limg = item.find('img')
             if item.string is not None:
-               str = item.string
-               item.replaceWith(str)
+                str = item.string
+                item.replaceWith(str)
             else:
-               if limg:
-                  item.name  = 'div'
-                  item.attrs = []
-                  if not limg.has_key('alt'):
-                     limg['alt'] = 'image'
-               else:
-                   str = self.tag_to_string(item)
-                   item.replaceWith(str)
+                if limg:
+                    item.name  = 'div'
+                    item.attrs = []
+                    if not limg.has_key('alt'):
+                        limg['alt'] = 'image'
+                else:
+                    str = self.tag_to_string(item)
+                    item.replaceWith(str)
         for item in soup.findAll('img'):
             if item.has_key('data-src'):
-               item['src'] = item['data-src']           
+                item['src'] = item['data-src']
         return soup
-        

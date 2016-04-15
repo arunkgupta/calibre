@@ -1,4 +1,4 @@
-#!/usr/bin/env  python
+#!/usr/bin/env  python2
 
 __license__   = 'GPL v3'
 __copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
@@ -13,7 +13,7 @@ from calibre import prints
 
 def option_parser():
     parser = OptionParser(usage=_('''\
-%prog [options]
+{0}
 
 Various command line interfaces useful for debugging calibre. With no options,
 this command starts an embedded python interpreter. You can also run the main
@@ -25,13 +25,14 @@ on.
 
 You can also use %prog to run standalone scripts. To do that use it like this:
 
-    %prog myscript.py -- --option1 --option2 file1 file2 ...
+    {1}
 
 Everything after the -- is passed to the script.
-'''))
+''').format(_('%prog [options]'), '%prog myscript.py -- --option1 --option2 file1 file2 ...'))
     parser.add_option('-c', '--command', help=_('Run python code.'))
     parser.add_option('-e', '--exec-file', help=_('Run the python code in file.'))
-    parser.add_option('-f', '--subset-font', help=_('Subset the specified font'))
+    parser.add_option('-f', '--subset-font', action='store_true', default=False,
+                      help=_('Subset the specified font. Use -- after this option to pass option to the font subsetting program.'))
     parser.add_option('-d', '--debug-device-driver', default=False, action='store_true',
                       help=_('Debug device detection'))
     parser.add_option('-g', '--gui',  default=False, action='store_true',
@@ -79,6 +80,10 @@ Everything after the -- is passed to the script.
     parser.add_option('--diff', action='store_true', default=False, help=_(
         'Run the calibre diff tool. For example:\n'
         'calibre-debug --diff file1 file2'))
+    parser.add_option('--default-programs', default=None, choices=['register', 'unregister'],
+                          help=_('(Un)register calibre from Windows Default Programs.') + ' --default-programs=(register|unregister)')
+    parser.add_option('--new-server', action='store_true',
+        help='Run the new calibre content server. Any options specified after a -- will be passed to the server.')
 
     return parser
 
@@ -150,7 +155,7 @@ def print_basic_debug_info(out=None):
     from calibre.constants import (__appname__, get_version, isportable, isosx,
                                    isfrozen, is64bit)
     out(__appname__, get_version(), 'Portable' if isportable else '',
-        'isfrozen:', isfrozen, 'is64bit:', is64bit)
+        'embedded-python:', isfrozen, 'is64bit:', is64bit)
     out(platform.platform(), platform.system(), platform.architecture())
     if iswindows and not is64bit:
         try:
@@ -254,7 +259,7 @@ def main(args=sys.argv):
         shutdown_other()
     elif opts.subset_font:
         from calibre.utils.fonts.sfnt.subset import main
-        main(['subset-font']+[opts.subset_font]+args[1:])
+        main(['subset-font'] + args[1:])
     elif opts.exec_file:
         run_script(opts.exec_file, args[1:])
     elif opts.run_plugin:
@@ -267,6 +272,18 @@ def main(args=sys.argv):
     elif opts.diff:
         from calibre.gui2.tweak_book.diff.main import main
         main(['calibre-diff'] + args[1:])
+    elif opts.default_programs:
+        if not iswindows:
+            raise SystemExit('Can only be run on Microsoft Windows')
+        if opts.default_programs == 'register':
+            from calibre.utils.winreg.default_programs import register as func
+        else:
+            from calibre.utils.winreg.default_programs import unregister as func
+        print 'Running', func.__name__, '...'
+        func()
+    elif opts.new_server:
+        from calibre.srv.standalone import main
+        main(args)
     elif len(args) >= 2 and args[1].rpartition('.')[-1] in {'py', 'recipe'}:
         run_script(args[1], args[2:])
     elif len(args) >= 2 and args[1].rpartition('.')[-1] in {'mobi', 'azw', 'azw3', 'docx', 'odt'}:
@@ -290,4 +307,3 @@ def main(args=sys.argv):
 
 if __name__ == '__main__':
     sys.exit(main())
-

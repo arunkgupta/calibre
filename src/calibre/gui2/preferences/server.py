@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 
 __license__   = 'GPL v3'
@@ -85,12 +85,11 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
                 _('Stopping server, this could take upto a minute, please wait...'),
                 show_copy_button=False)
         QTimer.singleShot(500, self.check_exited)
+        self.stopping_msg.exec_()
 
     def check_exited(self):
-        if self.gui.content_server.is_running:
+        if getattr(self.gui.content_server, 'is_running', False):
             QTimer.singleShot(20, self.check_exited)
-            if not self.stopping_msg.isVisible():
-                self.stopping_msg.exec_()
             return
 
         self.gui.content_server = None

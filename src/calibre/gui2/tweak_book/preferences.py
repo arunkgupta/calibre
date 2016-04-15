@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -20,6 +20,8 @@ from PyQt5.Qt import (
     QFontComboBox, QPushButton, QSizePolicy, QHBoxLayout, QGroupBox,
     QToolButton, QVBoxLayout, QSpacerItem, QTimer)
 
+from calibre import prepare_string_for_xml
+from calibre.gui2 import info_dialog
 from calibre.gui2.keyboard import ShortcutConfig
 from calibre.gui2.tweak_book import tprefs, toolbar_actions, editor_toolbar_actions, actions
 from calibre.gui2.tweak_book.editor.themes import default_theme, all_theme_names, ThemeEditor
@@ -152,7 +154,7 @@ class EditorSettings(BasicSettings):
 
     def __init__(self, parent=None):
         BasicSettings.__init__(self, parent)
-        self.dictionaries_changed = False
+        self.dictionaries_changed = self.snippets_changed = False
         self.l = l = QFormLayout(self)
         self.setLayout(l)
 
@@ -194,6 +196,12 @@ class EditorSettings(BasicSettings):
             ' happens only when the trailing semi-colon is typed.'))
         l.addRow(lw)
 
+        lw = self('auto_close_tags')
+        lw.setText(_('Auto &close tags when typing </'))
+        lw.setToolTip('<p>' + prepare_string_for_xml(_(
+            'With this option, every time you type </ the current HTML closing tag is auto-completed')))
+        l.addRow(lw)
+
         lw = self('editor_show_char_under_cursor')
         lw.setText(_('Show the name of the current character before the cursor along with the line and column number'))
         l.addRow(lw)
@@ -212,15 +220,33 @@ class EditorSettings(BasicSettings):
             ' for easy correction as you type.'))
         l.addRow(lw)
 
+        lw = self('editor_accepts_drops')
+        lw.setText(_('Allow drag and drop editing of text'))
+        lw.setToolTip('<p>' + _(
+            'Allow using drag and drop to move text around in the editor.'
+            ' It can be useful to turn this off if you have a misbehaving touchpad.'))
+        l.addRow(lw)
+
         self.dictionaries = d = QPushButton(_('Manage &spelling dictionaries'), self)
         d.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         d.clicked.connect(self.manage_dictionaries)
         l.addRow(d)
 
+        self.snippets = s = QPushButton(_('Manage sni&ppets'), self)
+        s.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        s.clicked.connect(self.manage_snippets)
+        l.addRow(s)
+
     def manage_dictionaries(self):
         d = ManageDictionaries(self)
         d.exec_()
         self.dictionaries_changed = True
+
+    def manage_snippets(self):
+        from calibre.gui2.tweak_book.editor.snippets import UserSnippets
+        d = UserSnippets(self)
+        if d.exec_() == d.Accepted:
+            self.snippets_changed = True
 
     def theme_choices(self):
         choices = {k:k for k in all_theme_names()}
@@ -287,6 +313,13 @@ class MainWindowSettings(BasicSettings):
             cn = {('top', 'left'): _('The top-left corner'), ('top', 'right'):_('The top-right corner'),
                   ('bottom', 'left'):_('The bottom-left corner'), ('bottom', 'right'):_('The bottom-right corner')}[(v, h)]
             l.addRow(cn + ':', w)
+        nd = self('restore_book_state')
+        nd.setText(_('Restore state of previously edited book when opening it again'))
+        nd.setToolTip('<p>' + _(
+            'When opening a previously edited book again, restore its state. That means all open'
+            ' files are automatically re-opened and the cursor is positioned at its previous location.'
+        ))
+        l.addRow(nd)
 
 class PreviewSettings(BasicSettings):
 
@@ -391,6 +424,14 @@ class ToolbarSettings(QWidget):
         self.read_settings()
         self.toggle_visibility(False)
         self.bars.currentIndexChanged.connect(self.bar_changed)
+
+        self.toolbar_icon_size = ics = QSpinBox(self)
+        ics.setMinimum(16), ics.setMaximum(128), ics.setSuffix(' px'), ics.setValue(tprefs['toolbar_icon_size'])
+        ics.setToolTip('<p>' + _('Adjust the size of icons on all toolbars'))
+        r = l.rowCount()
+        self.toolbar_icon_size_label = la = QLabel(_('Toolbar &icon size:'))
+        la.setBuddy(ics)
+        l.addWidget(la, r, 0), l.addWidget(ics, r, 1)
 
     def read_settings(self, prefs=None):
         prefs = prefs or tprefs
@@ -508,9 +549,12 @@ class ToolbarSettings(QWidget):
         self.read_settings(tprefs.defaults)
         self.original_settings = o
         self.build_lists()
+        self.toolbar_icon_size.setValue(tprefs.defaults['toolbar_icon_size'])
         self.changed_signal.emit()
 
     def commit(self):
+        if self.toolbar_icon_size.value() != tprefs['toolbar_icon_size']:
+            tprefs['toolbar_icon_size'] = self.toolbar_icon_size.value()
         if self.original_settings != self.current_settings:
             self.changed = True
             with tprefs:
@@ -623,6 +667,10 @@ class Preferences(QDialog):
         self.rcdb = b = bb.addButton(_('Restore current defaults'), bb.ResetRole)
         b.setToolTip(_('Restore defaults for currently displayed preferences'))
         b.clicked.connect(self.restore_current_defaults)
+        self.rconfs = b = bb.addButton(_('Restore confirmations'), bb.ResetRole)
+        b.setToolTip(_('Restore all disabled confirmation prompts'))
+        b.clicked.connect(self.restore_confirmations)
+
         l.addWidget(bb, 1, 0, 1, 2)
 
         self.resize(800, 600)
@@ -665,6 +713,10 @@ class Preferences(QDialog):
         return self.editor_panel.dictionaries_changed
 
     @property
+    def snippets_changed(self):
+        return self.editor_panel.snippets_changed
+
+    @property
     def toolbars_changed(self):
         return self.toolbars_panel.changed
 
@@ -675,6 +727,15 @@ class Preferences(QDialog):
 
     def restore_current_defaults(self):
         self.stacks.currentWidget().restore_defaults()
+
+    def restore_confirmations(self):
+        changed = 0
+        for key in tuple(tprefs):
+            if key.endswith('_again') and tprefs.get(key) is False:
+                del tprefs[key]
+                changed += 1
+        info_dialog(self, _('Disabled confirmations restored'), _(
+            '%d disabled confirmation prompts were restored') % changed, show=True)
 
     def accept(self):
         tprefs.set('preferences_geom', bytearray(self.saveGeometry()))

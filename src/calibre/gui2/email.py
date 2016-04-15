@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import print_function
 
@@ -63,7 +63,7 @@ class Sendmail(object):
         opts = email_config().parse()
         rh = opts.relay_host
         if rh and (
-            'gmail.com' in rh or 'live.com' in rh):
+            'gmail.com' in rh or 'live.com' in rh or 'gmx.com' in rh):
             self.rate_limit = tweaks['public_smtp_relay_delay']
 
     def __call__(self, attachment, aname, to, subject, text, log=None,
@@ -115,13 +115,19 @@ class Sendmail(object):
             eto = []
             for x in to.split(','):
                 eto.append(extract_email_address(x.strip()))
+            def safe_debug(*args, **kwargs):
+                try:
+                    return log.debug(*args, **kwargs)
+                except Exception:
+                    pass
+
             sendmail(msg, efrom, eto, localhost=None,
                         verbose=1,
                         relay=opts.relay_host,
                         username=opts.relay_username,
                         password=unhexlify(opts.relay_password).decode('utf-8'), port=opts.relay_port,
                         encryption=opts.encryption,
-                        debug_output=log.debug)
+                        debug_output=safe_debug)
         finally:
             self.last_send_time = time.time()
 
@@ -152,10 +158,8 @@ def email_news(mi, remove, get_fmts, done, job_manager):
         attachment = files[0]
         to_s = [account]
         subjects = [_('News:')+' '+mi.title]
-        texts    = [
-                _('Attached is the %s periodical downloaded by calibre.')
-                    % (mi.title,)
-                ]
+        texts    = [_(
+            'Attached is the %s periodical downloaded by calibre.') % (mi.title,)]
         attachment_names = [ascii_filename(mi.title)+os.path.splitext(attachment)[1]]
         attachments = [attachment]
         jobnames = [mi.title]

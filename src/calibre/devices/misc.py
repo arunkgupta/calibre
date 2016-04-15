@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement
 
@@ -97,7 +97,7 @@ class PDNOVEL(USBMS):
     def upload_cover(self, path, filename, metadata, filepath):
         coverdata = getattr(metadata, 'thumbnail', None)
         if coverdata and coverdata[2]:
-            with open('%s.jpg' % os.path.join(path, filename), 'wb') as coverfile:
+            with lopen('%s.jpg' % os.path.join(path, filename), 'wb') as coverfile:
                 coverfile.write(coverdata[2])
                 fsync(coverfile)
 
@@ -116,7 +116,7 @@ class PDNOVEL_KOBO(PDNOVEL):
             dirpath = os.path.join(path, '.thumbnail')
             if not os.path.exists(dirpath):
                 os.makedirs(dirpath)
-            with open(os.path.join(dirpath, filename+'.jpg'), 'wb') as coverfile:
+            with lopen(os.path.join(dirpath, filename+'.jpg'), 'wb') as coverfile:
                 coverfile.write(coverdata[2])
                 fsync(coverfile)
 
@@ -189,7 +189,7 @@ class LUMIREAD(USBMS):
             pdir = os.path.dirname(cfilepath)
             if not os.path.exists(pdir):
                 os.makedirs(pdir)
-            with open(cfilepath+'.jpg', 'wb') as f:
+            with lopen(cfilepath+'.jpg', 'wb') as f:
                 f.write(metadata.thumbnail[-1])
                 fsync(f)
 
@@ -210,8 +210,8 @@ class ALURATEK_COLOR(USBMS):
 
     EBOOK_DIR_MAIN = EBOOK_DIR_CARD_A = 'books'
 
-    VENDOR_NAME = ['USB_2.0', 'EZREADER', 'C4+', 'WOXTER', 'KIANO']
-    WINDOWS_MAIN_MEM = WINDOWS_CARD_A_MEM = ['USB_FLASH_DRIVER', '.', 'TOUCH', 'SCRIBA_190', 'BOOKYLIGHT']
+    VENDOR_NAME = ['USB_2.0', 'EZREADER', 'C4+', 'WOXTER', 'KIANO', 'SAD', 'LARK']
+    WINDOWS_MAIN_MEM = WINDOWS_CARD_A_MEM = ['USB_FLASH_DRIVER', '.', 'TOUCH', 'SCRIBA_190', 'BOOKYLIGHT', 'SAPIENS_V2', 'EBOOK']
     SCAN_FROM_ROOT = True
     SUPPORTS_SUB_DIRS_FOR_SCAN = True
 
@@ -336,7 +336,7 @@ class NEXTBOOK(USBMS):
             thumbnail_dir = os.path.join(thumbnail_dir, relpath)
             if not os.path.exists(thumbnail_dir):
                 os.makedirs(thumbnail_dir)
-            with open(os.path.join(thumbnail_dir, filename+'.jpg'), 'wb') as f:
+            with lopen(os.path.join(thumbnail_dir, filename+'.jpg'), 'wb') as f:
                 f.write(metadata.thumbnail[-1])
                 fsync(f)
     '''
@@ -526,4 +526,23 @@ class POCKETBOOK626(USBMS):
     VENDOR_NAME = ['USB_2.0']
     WINDOWS_MAIN_MEM = WINDOWS_CARD_A_MEM = ['USB_FLASH_DRIVER']
 
+class SONYDPTS1(USBMS):
 
+    name  = 'SONY DPT-S1'
+    gui_name = 'SONY DPT'
+    description    = _('Communicate with the SONY DPT-S1')
+    author         = 'Kovid Goyal'
+    supported_platforms = ['windows', 'osx', 'linux']
+    # Ordered list of supported formats
+    FORMATS     = ['pdf']
+    VENDOR_ID   = [0x054c]
+    PRODUCT_ID  = [0x0854]
+    BCD         = [0x0226]
+
+    EBOOK_DIR_MAIN = 'Books'
+    SCAN_FROM_ROOT = True
+    SUPPORTS_SUB_DIRS = True
+
+    VENDOR_NAME = ['SONY']
+    WINDOWS_MAIN_MEM = ['DPT-S1']
+    WINDOWS_CARD_A_MEM = ['DPT-S1__SD']

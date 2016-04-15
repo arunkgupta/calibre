@@ -13,8 +13,9 @@ device. This class handles device detection.
 
 import os, subprocess, time, re, sys, glob
 from itertools import repeat
+from collections import namedtuple
 
-from calibre import prints, as_unicode
+from calibre import prints
 from calibre.constants import DEBUG
 from calibre.devices.interface import DevicePlugin
 from calibre.devices.errors import DeviceError
@@ -25,15 +26,27 @@ from calibre.utils.filenames import ascii_filename as sanitize
 if isosx:
     usbobserver, usbobserver_err = plugins['usbobserver']
 
+if iswindows:
+    usb_info_cache = {}
+
+def eject_exe():
+    base = sys.extensions_location if hasattr(sys, 'new_app_layout') else os.path.dirname(sys.executable)
+    return os.path.join(base, 'calibre-eject.exe')
+
 class USBDevice:
 
     def __init__(self, dev):
         self.idVendor = dev[0]
         self.idProduct = dev[1]
         self.bcdDevice = dev[2]
-        self.manufacturer = dev[3]
-        self.product = dev[4]
-        self.serial = dev[5]
+        if iswindows:
+            # Getting this information requires communicating with the device
+            # we only do that in the can_handle_windows() method, if needed.
+            self.manufacturer = self.serial = self.product = None
+        else:
+            self.manufacturer = dev[3]
+            self.product = dev[4]
+            self.serial = dev[5]
 
     def match_serial(self, serial):
         return self.serial and self.serial == serial
@@ -108,10 +121,7 @@ class Device(DeviceConfig, DevicePlugin):
     def reset(self, key='-1', log_packets=False, report_progress=None,
             detected_device=None):
         self._main_prefix = self._card_a_prefix = self._card_b_prefix = None
-        try:
-            self.detected_device = USBDevice(detected_device)
-        except:  # On windows detected_device is None
-            self.detected_device = None
+        self.detected_device = None if detected_device is None else USBDevice(detected_device)
         self.set_progress_reporter(report_progress)
 
     def set_progress_reporter(self, report_progress):
@@ -184,37 +194,6 @@ class Device(DeviceConfig, DevicePlugin):
     def windows_filter_pnp_id(self, pnp_id):
         return False
 
-    def windows_match_device(self, pnp_id, attr):
-        device_id = getattr(self, attr)
-
-        def test_vendor():
-            vendors = [self.VENDOR_NAME] if isinstance(self.VENDOR_NAME,
-                    basestring) else self.VENDOR_NAME
-            for v in vendors:
-                if 'VEN_'+str(v).upper() in pnp_id:
-                    return True
-            return False
-
-        if device_id is None or not test_vendor():
-            return False
-
-        if self.windows_filter_pnp_id(pnp_id):
-            return False
-
-        if hasattr(device_id, 'search'):
-            return device_id.search(pnp_id) is not None
-
-        if isinstance(device_id, basestring):
-            device_id = [device_id]
-
-        for x in device_id:
-            x = x.upper()
-
-            if 'PROD_' + x in pnp_id:
-                return True
-
-        return False
-
     def windows_sort_drives(self, drives):
         '''
         Called to disambiguate main memory and storage card for devices that
@@ -223,80 +202,75 @@ class Device(DeviceConfig, DevicePlugin):
         '''
         return drives
 
-    def can_handle_windows(self, device_id, debug=False):
-        from calibre.devices.scanner import win_pnp_drives
-        drives = win_pnp_drives()
-        for pnp_id in drives.values():
-            if self.windows_match_device(pnp_id, 'WINDOWS_MAIN_MEM'):
-                return True
+    def can_handle_windows(self, usbdevice, debug=False):
+        from calibre.devices.interface import DevicePlugin
+        if self.can_handle.im_func is DevicePlugin.can_handle.im_func:
+            # No custom can_handle implementation
+            return True
+        # Delegate to the unix can_handle function, creating a unix like
+        # USBDevice object
+        from calibre.devices.winusb import get_usb_info
+        dev = usb_info_cache.get(usbdevice)
+        if dev is None:
+            try:
+                data = get_usb_info(usbdevice, debug=debug)
+            except Exception:
+                time.sleep(0.1)
+                try:
+                    data = get_usb_info(usbdevice, debug=debug)
+                except Exception:
+                    data = {}
+            dev = usb_info_cache[usbdevice] = namedtuple(
+                'USBDevice', 'vendor_id product_id bcd manufacturer product serial')(
+                usbdevice.vendor_id, usbdevice.product_id, usbdevice.bcd,
+                data.get('manufacturer') or '', data.get('product') or '', data.get('serial_number') or '')
             if debug:
-                print '\tNo match found in:', pnp_id
-        return False
+                prints('USB Info for device: {}'.format(dev))
+        return self.can_handle(dev, debug=debug)
 
     def open_windows(self):
-        from calibre.devices.scanner import win_pnp_drives, drivecmp
+        from calibre.devices.scanner import drive_is_ok
+        from calibre.devices.winusb import get_drive_letters_for_device
+        usbdev = self.device_being_opened
+        debug = DEBUG or getattr(self, 'do_device_debug', False)
+        try:
+            dlmap = get_drive_letters_for_device(usbdev, debug=debug)
+        except Exception:
+            dlmap = []
 
-        time.sleep(5)
+        if not dlmap['drive_letters']:
+            time.sleep(7)
+            dlmap = get_drive_letters_for_device(usbdev, debug=debug)
+
+        if debug:
+            from pprint import pformat
+            prints('Drive letters for {}'.format(usbdev))
+            prints(pformat(dlmap))
+
+        filtered = set()
+        for dl in dlmap['drive_letters']:
+            pnp_id = dlmap['pnp_id_map'][dl].upper()
+            if dl in dlmap['readonly_drives']:
+                filtered.add(dl)
+                if debug:
+                    prints('Ignoring the drive %s as it is readonly' % dl)
+            elif self.windows_filter_pnp_id(pnp_id):
+                filtered.add(dl)
+                if debug:
+                    prints('Ignoring the drive %s because of a PNP filter on %s' % (dl, pnp_id))
+            elif not drive_is_ok(dl, debug=debug):
+                filtered.add(dl)
+                if debug:
+                    prints('Ignoring the drive %s because failed to get free space for it' % dl)
+        dlmap['drive_letters'] = [dl for dl in dlmap['drive_letters'] if dl not in filtered]
+
+        if not dlmap['drive_letters']:
+            raise DeviceError(_('Unable to detect any disk drives for the device: %s. Try rebooting') % self.get_gui_name())
+
         drives = {}
-        seen = set()
-        prod_pat = re.compile(r'PROD_(.+?)&')
-        dup_prod_id = False
 
-        def check_for_dups(pnp_id):
-            try:
-                match = prod_pat.search(pnp_id)
-                if match is not None:
-                    prodid = match.group(1)
-                    if prodid in seen:
-                        return True
-                    else:
-                        seen.add(prodid)
-            except:
-                pass
-            return False
-
-        for drive, pnp_id in win_pnp_drives().items():
-            if self.windows_match_device(pnp_id, 'WINDOWS_CARD_A_MEM') and \
-                    not drives.get('carda', False):
-                drives['carda'] = drive
-                dup_prod_id |= check_for_dups(pnp_id)
-            elif self.windows_match_device(pnp_id, 'WINDOWS_CARD_B_MEM') and \
-                    not drives.get('cardb', False):
-                drives['cardb'] = drive
-                dup_prod_id |= check_for_dups(pnp_id)
-            elif self.windows_match_device(pnp_id, 'WINDOWS_MAIN_MEM') and \
-                    not drives.get('main', False):
-                drives['main'] = drive
-                dup_prod_id |= check_for_dups(pnp_id)
-
-            if 'main' in drives.keys() and 'carda' in drives.keys() and \
-                    'cardb' in drives.keys():
-                break
-
-        # This is typically needed when the device has the same
-        # WINDOWS_MAIN_MEM and WINDOWS_CARD_A_MEM in which case
-        # if the device is connected without a card, the above
-        # will incorrectly identify the main mem as carda
-        # See for example the driver for the Nook
-        if drives.get('carda', None) is not None and \
-                drives.get('main', None) is None:
-            drives['main'] = drives.pop('carda')
-
-        if drives.get('main', None) is None:
-            raise DeviceError(
-                _('Unable to detect the %s disk drive. Try rebooting.') %
-                self.__class__.__name__)
-
-        # Sort drives by their PNP drive numbers if the CARD and MAIN
-        # MEM strings are identical
-        if dup_prod_id or \
-                self.WINDOWS_MAIN_MEM in (self.WINDOWS_CARD_A_MEM,
-                self.WINDOWS_CARD_B_MEM) or \
-                self.WINDOWS_CARD_A_MEM == self.WINDOWS_CARD_B_MEM:
-            letters = sorted(drives.values(), cmp=drivecmp)
-            drives = {}
-            for which, letter in zip(['main', 'carda', 'cardb'], letters):
-                drives[which] = letter
+        for drive_letter, which in zip(dlmap['drive_letters'], 'main carda cardb'.split()):
+            drives[which] = drive_letter + ':\\'
 
         drives = self.windows_sort_drives(drives)
         self._main_prefix = drives.get('main')
@@ -653,7 +627,7 @@ class Device(DeviceConfig, DevicePlugin):
             path = os.path.join(mp, 'calibre_readonly_test')
             ro = True
             try:
-                with open(path, 'wb'):
+                with lopen(path, 'wb'):
                     ro = False
             except:
                 pass
@@ -725,7 +699,8 @@ class Device(DeviceConfig, DevicePlugin):
                         d.manufacturer == objif.GetProperty('usb.vendor') and \
                         d.product == objif.GetProperty('usb.product') and \
                         d.serial == objif.GetProperty('usb.serial'):
-                    dpaths = manager.FindDeviceStringMatch('storage.originating_device', path)
+                    midpath = manager.FindDeviceStringMatch('info.parent', path)
+                    dpaths = manager.FindDeviceStringMatch('storage.originating_device', path) + manager.FindDeviceStringMatch('storage.originating_device', midpath[0])
                     for dpath in dpaths:
                         # devif = dbus.Interface(bus.get_object('org.freedesktop.Hal', dpath), 'org.freedesktop.Hal.Device')
                         try:
@@ -876,11 +851,7 @@ class Device(DeviceConfig, DevicePlugin):
                     time.sleep(2)
                     self.open_freebsd()
             if iswindows:
-                try:
-                    self.open_windows()
-                except DeviceError:
-                    time.sleep(7)
-                    self.open_windows()
+                self.open_windows()
             if isosx:
                 try:
                     self.open_osx()
@@ -897,9 +868,7 @@ class Device(DeviceConfig, DevicePlugin):
         pass
 
     def eject_windows(self):
-        from calibre.constants import plugins
         from threading import Thread
-        winutil, winutil_err = plugins['winutil']
         drives = []
         for x in ('_main_prefix', '_card_a_prefix', '_card_b_prefix'):
             x = getattr(self, x, None)
@@ -907,21 +876,10 @@ class Device(DeviceConfig, DevicePlugin):
                 drives.append(x[0].upper())
 
         def do_it(drives):
-            for d in drives:
-                try:
-                    winutil.eject_drive(bytes(d)[0])
-                except Exception as e:
-                    try:
-                        prints("Eject failed:", as_unicode(e))
-                    except:
-                        pass
-
-        def do_it2(drives):
             import win32process
-            EJECT = os.path.join(os.path.dirname(sys.executable), 'calibre-eject.exe')
-            subprocess.Popen([EJECT] + drives, creationflags=win32process.CREATE_NO_WINDOW).wait()
+            subprocess.Popen([eject_exe()] + drives, creationflags=win32process.CREATE_NO_WINDOW).wait()
 
-        t = Thread(target=do_it2, args=[drives])
+        t = Thread(target=do_it, args=[drives])
         t.daemon = True
         t.start()
         self.__save_win_eject_thread = t

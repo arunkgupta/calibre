@@ -6,14 +6,14 @@ __license__ = 'GPL 3'
 __copyright__ = '2011, John Schember <john@nachtimwald.com>'
 __docformat__ = 'restructuredtext en'
 
-import traceback
+import traceback, base64
 from contextlib import closing
 from threading import Thread
 from Queue import Queue
 
 from calibre import browser
 from calibre.constants import DEBUG
-from calibre.utils.magick.draw import thumbnail
+from calibre.utils.img import scale_image
 
 class GenericDownloadThreadPool(object):
     '''
@@ -122,6 +122,7 @@ class SearchThread(Thread):
                     res.store_name = store_name
                     res.affiliate = store_plugin.base_plugin.affiliate
                     res.plugin_author = store_plugin.base_plugin.author
+                    res.create_browser = store_plugin.create_browser
                     self.results.put((res, store_plugin))
                 self.tasks.task_done()
             except:
@@ -138,6 +139,8 @@ class CoverThreadPool(GenericDownloadThreadPool):
         self.tasks.put((search_result, update_callback, timeout))
         GenericDownloadThreadPool.add_task(self)
 
+def decode_data_url(url):
+    return base64.standard_b64decode(url.partition(',')[2])
 
 class CoverThread(Thread):
 
@@ -158,9 +161,12 @@ class CoverThread(Thread):
             try:
                 result, callback, timeout = self.tasks.get()
                 if result and result.cover_url:
-                    with closing(self.br.open(result.cover_url, timeout=timeout)) as f:
-                        result.cover_data = f.read()
-                    result.cover_data = thumbnail(result.cover_data, 64, 64)[2]
+                    if result.cover_url.startswith('data:'):
+                        result.cover_data = decode_data_url(result.cover_url)
+                    else:
+                        with closing(self.br.open(result.cover_url, timeout=timeout)) as f:
+                            result.cover_data = f.read()
+                    result.cover_data = scale_image(result.cover_data, 64, 64)[2]
                     callback()
                 self.tasks.task_done()
             except:

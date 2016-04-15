@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -488,6 +488,16 @@ class Source(Plugin):
         Return a human readable name from the return value of get_book_url().
         '''
         return self.name
+
+    def get_book_urls(self, identifiers):
+        '''
+        Override this method if you would like to return multiple urls for this book.
+        Return a list of 3-tuples. By default this method simply calls :func:`get_book_url`.
+        '''
+        data = self.get_book_url(identifiers)
+        if data is None:
+            return ()
+        return (data,)
 
     def get_cached_cover_url(self, identifiers):
         '''

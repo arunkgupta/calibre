@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=utf-8
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -7,7 +7,6 @@ __license__ = 'GPL v3'
 __copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
 
 import textwrap
-from functools import partial
 
 from PyQt5.Qt import (
     QIcon, QWidget, Qt, QGridLayout, QScrollBar, QToolBar, QAction,
@@ -15,13 +14,14 @@ from PyQt5.Qt import (
     QRegExpValidator, QRegExp, QPalette, QColor, QBrush, QPainter,
     QDockWidget, QSize, QWebView, QLabel, QVBoxLayout)
 
-from calibre.gui2 import rating_font, workaround_broken_under_mouse
+from calibre.gui2 import rating_font, error_dialog
 from calibre.gui2.main_window import MainWindow
 from calibre.gui2.search_box import SearchBox2
 from calibre.gui2.viewer.documentview import DocumentView
 from calibre.gui2.viewer.bookmarkmanager import BookmarkManager
 from calibre.gui2.viewer.toc import TOCView, TOCSearch
 from calibre.gui2.viewer.footnote import FootnotesView
+from calibre.utils.localization import is_rtl
 
 class DoubleSpinBox(QDoubleSpinBox):  # {{{
 
@@ -35,8 +35,11 @@ class DoubleSpinBox(QDoubleSpinBox):  # {{{
     def set_value(self, val):
         self.blockSignals(True)
         self.setValue(val)
-        self.setToolTip(self.tt +
+        try:
+            self.setToolTip(self.tt +
                 ' [{0:.0%}]'.format(float(val)/self.maximum()))
+        except ZeroDivisionError:
+            self.setToolTip(self.tt)
         self.blockSignals(False)
         self.value_changed.emit(self.value(), self.maximum())
 # }}}
@@ -52,7 +55,7 @@ class Reference(QLineEdit):  # {{{
             'Go to a reference. To get reference numbers, use the <i>reference '
             'mode</i>, by clicking the reference mode button in the toolbar.')))
         if hasattr(self, 'setPlaceholderText'):
-            self.setPlaceholderText(_('Go to...'))
+            self.setPlaceholderText(_('Go to a reference number...'))
         self.editingFinished.connect(self.editing_finished)
 
     def editing_finished(self):
@@ -83,7 +86,7 @@ class Metadata(QWebView):  # {{{
         from calibre.ebooks.metadata.book.render import mi_to_html
 
         def render_data(mi, use_roman_numbers=True, all_fields=False):
-            return mi_to_html(mi, use_roman_numbers=use_roman_numbers, rating_font=rating_font())
+            return mi_to_html(mi, use_roman_numbers=use_roman_numbers, rating_font=rating_font(), rtl=is_rtl())
 
         mi = opf.to_book_metadata()
         html = render_html(mi, self.css, True, self, render_data_func=render_data)
@@ -221,7 +224,7 @@ class Main(MainWindow):
         cl.addWidget(vs, 0, 1, 2, 1)
 
         self.horizontal_scrollbar = hs = QScrollBar(c)
-        hs.setOrientation(Qt.Vertical), hs.setObjectName("horizontal_scrollbar")
+        hs.setOrientation(Qt.Horizontal), hs.setObjectName("horizontal_scrollbar")
         cl.addWidget(hs, 1, 0, 1, 1)
 
         self.tool_bar = tb = ToolBar(self)
@@ -273,6 +276,7 @@ class Main(MainWindow):
         d.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
 
         self.footnotes_dock = d = QDockWidget(_('Footnotes'), self)
+        d.visibilityChanged.connect(self.footnote_visibility_changed)
         d.setContextMenuPolicy(Qt.CustomContextMenu)
         self.footnotes_view = FootnotesView(self)
         self.footnotes_view.follow_link.connect(self.view.follow_footnote_link)
@@ -285,6 +289,7 @@ class Main(MainWindow):
         d.setAllowedAreas(Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea | Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
 
         self.create_actions()
+        self.themes_menu.aboutToShow.connect(self.themes_menu_shown, type=Qt.QueuedConnection)
 
         self.metadata = Metadata(self.centralwidget)
         self.history = History(self.action_back, self.action_forward)
@@ -335,13 +340,6 @@ class Main(MainWindow):
 
         self.resize(653, 746)
 
-        if workaround_broken_under_mouse is not None:
-            for bar in (self.tool_bar, self.tool_bar2):
-                for ac in bar.actions():
-                    m = ac.menu()
-                    if m is not None:
-                        m.aboutToHide.connect(partial(workaround_broken_under_mouse, bar.widgetForAction(ac)))
-
     def resizeEvent(self, ev):
         if self.metadata.isVisible():
             self.metadata.update_layout()
@@ -353,6 +351,12 @@ class Main(MainWindow):
         self.setCorner(Qt.TopRightCorner, Qt.RightDockWidgetArea)
         self.setCorner(Qt.BottomRightCorner, Qt.RightDockWidgetArea)
         self.footnotes_dock.close()
+
+    def themes_menu_shown(self):
+        if len(self.themes_menu.actions()) == 0:
+            self.themes_menu.hide()
+            error_dialog(self, _('No themes'), _(
+                'You must first create some themes in the viewer preferences'), show=True)
 
     def create_actions(self):
         def a(name, text, icon, tb=None, sc_name=None, menu_name=None, popup_mode=QToolButton.MenuButtonPopup):
@@ -384,7 +388,7 @@ class Main(MainWindow):
         a('copy', _('Copy to clipboard'), 'edit-copy.png').setDisabled(True)
         a('font_size_larger', _('Increase font size'), 'font_size_larger.png')
         a('font_size_smaller', _('Decrease font size'), 'font_size_smaller.png')
-        a('table_of_contents', self.toc_dock, 'highlight_only_on.png', sc_name='Table of Contents')
+        a('table_of_contents', self.toc_dock, 'toc.png', sc_name='Table of Contents')
         a('full_screen', _('Toggle full screen'), 'page.png', sc_name='Fullscreen').setCheckable(True)
         self.tool_bar.addSeparator()
 
@@ -397,12 +401,11 @@ class Main(MainWindow):
         self.tool_bar.addSeparator()
 
         a('preferences', _('Preferences'), 'config.png')
-        a('metadata', _('Show book metadata'), 'dialog_information.png').setCheckable(True)
+        a('metadata', _('Show book metadata'), 'metadata.png').setCheckable(True)
         a('load_theme', _('Load a theme'), 'wizard.png', menu_name='themes', popup_mode=QToolButton.InstantPopup)
         self.tool_bar.addSeparator()
 
-        a('print', _('Print'), 'print.png', menu_name='print')
-        self.print_menu.addAction(QIcon(I('print-preview.png')), _('Print Preview'))
+        a('print', _('Print to PDF file'), 'print.png')
 
         a('find_next', _('Find next occurrence'), 'arrow-down.png', tb=self.tool_bar2)
         a('find_previous', _('Find previous occurrence'), 'arrow-up.png', tb=self.tool_bar2)

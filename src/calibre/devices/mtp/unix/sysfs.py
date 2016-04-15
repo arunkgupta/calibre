@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:fdm=marker:ai
 from __future__ import (unicode_literals, division, absolute_import,
                         print_function)
@@ -28,7 +28,7 @@ class MTPDetect(object):
 
         def read(x):
             try:
-                with open(x, 'rb') as f:
+                with lopen(x, 'rb') as f:
                     return f.read()
             except EnvironmentError:
                 pass

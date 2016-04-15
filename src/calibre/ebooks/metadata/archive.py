@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 from __future__ import with_statement
 
@@ -60,7 +60,19 @@ class ArchiveExtract(FileTypePlugin):
         else:
             fnames = zf.namelist()
 
-        fnames = [x for x in fnames if '.' in x and x.lower().rpartition('/')[-1] != 'thumbs.db']
+        def fname_ok(fname):
+            bn = os.path.basename(fname).lower()
+            if bn == 'thumbs.db':
+                return False
+            if '.' not in bn:
+                return False
+            if bn.rpartition('.')[-1] in {'diz', 'nfo'}:
+                return False
+            if '__MACOSX' in fname.split('/'):
+                return False
+            return True
+
+        fnames = list(filter(fname_ok, fnames))
         if is_comic(fnames):
             ext = '.cbr' if is_rar else '.cbz'
             of = self.temporary_file('_archive_extract'+ext)
@@ -72,8 +84,9 @@ class ArchiveExtract(FileTypePlugin):
             return archive
         fname = fnames[0]
         ext = os.path.splitext(fname)[1][1:]
-        if ext.lower() not in ('lit', 'epub', 'mobi', 'prc', 'rtf', 'pdf',
-                'mp3', 'pdb', 'azw', 'azw1', 'azw3', 'fb2'):
+        if ext.lower() not in {
+                'lit', 'epub', 'mobi', 'prc', 'rtf', 'pdf', 'mp3', 'pdb',
+                'azw', 'azw1', 'azw3', 'fb2', 'docx', 'doc', 'odt'}:
             return archive
 
         of = self.temporary_file('_archive_extract.'+ext)
@@ -95,7 +108,10 @@ def get_comic_book_info(d, mi, series_index='volume'):
         if si is None:
             si = d.get('issue' if series_index == 'volume' else 'volume', None)
         if si is not None:
-            mi.series_index = float(si)
+            try:
+                mi.series_index = float(si)
+            except Exception:
+                mi.series_index = 1
     if d.get('rating', -1) > -1:
         mi.rating = d['rating']
     for x in ('title', 'publisher'):
